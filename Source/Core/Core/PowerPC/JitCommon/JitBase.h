@@ -15,7 +15,9 @@
 #include "Core/PowerPC/CPUCoreBase.h"
 #include "Core/PowerPC/JitCommon/JitAsmCommon.h"
 #include "Core/PowerPC/JitCommon/JitCache.h"
+#include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PPCAnalyst.h"
+#include "Core/PowerPC/Profiler.h"
 
 //#define JIT_LOG_GENERATED_CODE  // Enables logging of generated code
 //#define JIT_LOG_GPR             // Enables logging of the PPC general purpose regs
@@ -40,12 +42,12 @@
   FALLBACK_IF(SConfig::GetInstance().bJITOff || SConfig::GetInstance().setting)
 
 class JitBase;
+class JitCommonBase;
 
 extern JitBase* g_jit;
 
 class JitBase : public CPUCoreBase
 {
-protected:
   struct JitOptions
   {
     bool enableBlocklink;
@@ -54,6 +56,24 @@ protected:
     bool fastmem;
     bool memcheck;
   };
+public:
+  virtual void Jit(u32 em_address) = 0;
+
+  virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;
+  virtual bool HandleStackFault() { return false; }
+  virtual void InvalidateICache(u32 address, u32 size, bool forced) = 0;
+  virtual void ClearSafe() = 0;
+  virtual void CompileExceptionCheck(JitInterface::ExceptionType type) = 0;
+  
+  virtual JitCommonBase *Downcast() { return nullptr; }
+
+  // This should probably be removed from public:
+  JitOptions jo{};
+};
+
+class JitCommonBase : public JitBase
+{
+protected:
   struct JitState
   {
     u32 compilerPC;
@@ -110,23 +130,22 @@ protected:
   void UpdateMemoryOptions();
 
 public:
-  JitBase();
-  ~JitBase() override;
+  JitCommonBase();
+  ~JitCommonBase() override;
 
-  static const u8* Dispatch(JitBase& jit);
+  void GetProfileResults(Profiler::ProfileStats* prof_stats);
+  JitCommonBase *Downcast() override { return this; }
+
+  static const u8* Dispatch(JitCommonBase& jit);
   virtual JitBaseBlockCache* GetBlockCache() = 0;
-
-  virtual void Jit(u32 em_address) = 0;
-
   virtual const CommonAsmRoutinesBase* GetAsmRoutines() = 0;
-
-  virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;
-  virtual bool HandleStackFault() { return false; }
+  virtual void InvalidateICache(u32 address, u32 size, bool forced) { GetBlockCache()->InvalidateICache(address, size, forced); }
+  void ClearSafe() { GetBlockCache()->Clear(); }
+  void CompileExceptionCheck(JitInterface::ExceptionType type);
 
   static constexpr std::size_t code_buffer_size = 32000;
 
   // This should probably be removed from public:
-  JitOptions jo{};
   JitState js{};
 };
 

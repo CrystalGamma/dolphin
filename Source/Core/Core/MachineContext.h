@@ -113,6 +113,10 @@ typedef mcontext_t SContext;
 #define CTX_REG(x) regs[x]
 #define CTX_SP sp
 #define CTX_PC pc
+#elif _ARCH_PPC64
+#define CTX_REG(x) regs[x]
+#define CTX_SP sp
+#define CTX_PC pc
 #else
 #error No context definition for architecture
 #endif

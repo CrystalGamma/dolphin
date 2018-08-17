@@ -30,7 +30,7 @@ constexpr Gen::X64Reg RPPCSTATE = Gen::RBP;
 
 constexpr size_t CODE_SIZE = 1024 * 1024 * 32;
 
-class Jitx86Base : public JitBase, public QuantizedMemoryRoutines
+class Jitx86Base : public JitCommonBase, public QuantizedMemoryRoutines
 {
 protected:
   bool BackPatch(u32 emAddress, SContext* ctx);

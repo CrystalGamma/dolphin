@@ -10,12 +10,6 @@
 #include <string>
 #include <unordered_set>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include "Common/PerformanceCounter.h"
-#endif
-
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/File.h"
@@ -25,10 +19,8 @@
 #include "Core/PowerPC/CPUCoreBase.h"
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
-#include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
 #include "Core/PowerPC/PowerPC.h"
-#include "Core/PowerPC/Profiler.h"
 
 #if _M_X86
 #include "Core/PowerPC/Jit64/Jit.h"
@@ -113,27 +105,12 @@ void GetProfileResults(Profiler::ProfileStats* prof_stats)
   prof_stats->cost_sum = 0;
   prof_stats->timecost_sum = 0;
   prof_stats->block_stats.clear();
-
-  Core::State old_state = Core::GetState();
-  if (old_state == Core::State::Running)
-    Core::SetState(Core::State::Paused);
-
-  QueryPerformanceFrequency((LARGE_INTEGER*)&prof_stats->countsPerSec);
-  g_jit->GetBlockCache()->RunOnBlocks([&prof_stats](const JitBlock& block) {
-    const auto& data = block.profile_data;
-    u64 cost = data.downcountCounter;
-    u64 timecost = data.ticCounter;
-    // Todo: tweak.
-    if (data.runCount >= 1)
-      prof_stats->block_stats.emplace_back(block.effectiveAddress, cost, timecost, data.runCount,
-                                           block.codeSize);
-    prof_stats->cost_sum += cost;
-    prof_stats->timecost_sum += timecost;
-  });
-
-  sort(prof_stats->block_stats.begin(), prof_stats->block_stats.end());
-  if (old_state == Core::State::Running)
-    Core::SetState(Core::State::Running);
+  
+  JitCommonBase *jit_common = g_jit->Downcast();
+  if (!jit_common)
+  {
+    jit_common->GetProfileResults(prof_stats);
+  }
 }
 
 int GetHostCode(u32* address, const u8** code, u32* code_size)
@@ -143,13 +120,19 @@ int GetHostCode(u32* address, const u8** code, u32* code_size)
     *code_size = 0;
     return 1;
   }
+  JitCommonBase *jit_common = g_jit->Downcast();
+  if (!jit_common)
+  {
+    *code_size = 0;
+    return 1;
+  }
 
-  JitBlock* block = g_jit->GetBlockCache()->GetBlockFromStartAddress(*address, MSR.Hex);
+  JitBlock* block = jit_common->GetBlockCache()->GetBlockFromStartAddress(*address, MSR.Hex);
   if (!block)
   {
     for (int i = 0; i < 500; i++)
     {
-      block = g_jit->GetBlockCache()->GetBlockFromStartAddress(*address - 4 * i, MSR.Hex);
+      block = jit_common->GetBlockCache()->GetBlockFromStartAddress(*address - 4 * i, MSR.Hex);
       if (block)
         break;
     }
@@ -208,13 +191,13 @@ void ClearSafe()
   // the JIT'ed code.
   // TODO: There's probably a better way to handle this situation.
   if (g_jit)
-    g_jit->GetBlockCache()->Clear();
+    g_jit->ClearSafe();
 }
 
 void InvalidateICache(u32 address, u32 size, bool forced)
 {
   if (g_jit)
-    g_jit->GetBlockCache()->InvalidateICache(address, size, forced);
+    g_jit->InvalidateICache(address, size, forced);
 }
 
 void CompileExceptionCheck(ExceptionType type)
@@ -222,36 +205,7 @@ void CompileExceptionCheck(ExceptionType type)
   if (!g_jit)
     return;
 
-  std::unordered_set<u32>* exception_addresses = nullptr;
-
-  switch (type)
-  {
-  case ExceptionType::FIFOWrite:
-    exception_addresses = &g_jit->js.fifoWriteAddresses;
-    break;
-  case ExceptionType::PairedQuantize:
-    exception_addresses = &g_jit->js.pairedQuantizeAddresses;
-    break;
-  case ExceptionType::SpeculativeConstants:
-    exception_addresses = &g_jit->js.noSpeculativeConstantsAddresses;
-    break;
-  }
-
-  if (PC != 0 && (exception_addresses->find(PC)) == (exception_addresses->end()))
-  {
-    if (type == ExceptionType::FIFOWrite)
-    {
-      // Check in case the code has been replaced since: do we need to do this?
-      const OpType optype = PPCTables::GetOpInfo(PowerPC::HostRead_U32(PC))->type;
-      if (optype != OpType::Store && optype != OpType::StoreFP && optype != OpType::StorePS)
-        return;
-    }
-    exception_addresses->insert(PC);
-
-    // Invalidate the JIT block so that it gets recompiled with the external exception check
-    // included.
-    g_jit->GetBlockCache()->InvalidateICache(PC, 4, true);
-  }
+  g_jit->CompileExceptionCheck(type);
 }
 
 void Shutdown()
