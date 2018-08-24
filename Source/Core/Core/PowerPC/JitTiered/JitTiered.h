@@ -58,7 +58,7 @@ public:
     }
     side ^= 1;
     auto res = std::make_optional<YieldGuard>(*this);
-    writerGuard.swap(*res.guard);
+    writerGuard.swap(res->guard);
     return res;
   }
 };
