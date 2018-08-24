@@ -39,7 +39,7 @@ public:
     HandShake &parent;
     std::unique_lock<std::mutex> guard;
   public:
-    YieldGuard(HandShake &par, std::unique_lock<std::mutex> guard_) : parent(par), guard(guard_) {}
+    YieldGuard(HandShake &par, std::unique_lock<std::mutex>&& guard_) : parent(par), guard(guard_) {}
     /// returns the side that will be freed after dropping this guard
     Inner& GetRef() { return parent.sides[1^parent.side].inner; }
   };
