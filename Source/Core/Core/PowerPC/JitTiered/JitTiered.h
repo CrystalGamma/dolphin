@@ -66,8 +66,8 @@ private:
   typedef u64 Bloom;
   typedef void (*InterpreterFunc)(UGeckoInstruction);
   
-  Bloom BloomAll() { return 0xffff_ffff_ffff_ffff; }
-  Bloom BloomNone() { return 0; }
+  static Bloom BloomAll() constexpr { return 0xffff_ffff_ffff_ffff; }
+  static Bloom BloomNone() constexpr { return 0; }
 
   struct DecodedInstruction
   {
@@ -93,9 +93,9 @@ private:
 
   /// bloom filter for blocks invalidated this cycle. since interpreter blocks are invalidated immediately,
   /// this is only used when consulting the block table (managed by Baseline ⇒ asynchronously invalidated)
-  Bloom invalidation_mask = BloomNone;
+  Bloom invalidation_mask = BloomNone();
   /// when consulting the block table, we need to consider that Baseline may not have removed the invalidated blocks of the last cycle yet, either
-  Bloom old_invalidation_mask = BloomNone;
+  Bloom old_invalidation_mask = BloomNone();
 
   static constexpr int DISP_CACHE_WAYS_SHIFT = 2;
   static constexpr int DISP_CACHE_SETS_SHIFT = 8;
