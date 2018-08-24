@@ -39,7 +39,7 @@ public:
     HandShake &parent;
     std::unique_lock<std::mutex> guard;
   public:
-    YieldGuard(HandShake &par, std::unique_lock<std::mutex> guard_) : parent(par), guard{guard_} {}
+    YieldGuard(HandShake &par) : parent(par), guard(parent.sides[parent.side].mutex) {}
     /// returns the side that will be freed after dropping this guard
     Inner& GetRef() { return parent.sides[1^parent.side].inner; }
   };
@@ -57,9 +57,9 @@ public:
       return {};
     }
     side ^= 1;
-    YieldGuard guard(*this, std::unique_lock(sides[side].mutex));
-    writerGuard.swap(guard.guard);
-    return std::make_optional(guard);
+    auto res = std::make_optional<YieldGuard>(*this);
+    writerGuard.swap(*guard.guard);
+    return res;
   }
 };
 
