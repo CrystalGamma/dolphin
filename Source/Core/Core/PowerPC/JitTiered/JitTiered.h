@@ -173,6 +173,11 @@ private:
     }
     return address;
   }
+  static std::optional<int> FindInterpreterBlock(u32 *table, u32 key, u32 address);
+  std::vector<DecodedInstruction> &CreateFreeBlock(u32 key, u32 address);
+  
+  void InterpretBlock();
+  void CompactInterpreterBlocks();
 public:
   virtual const char *GetName() const {return "TieredGeneric";}
   virtual void Init() {}
