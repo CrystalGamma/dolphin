@@ -78,14 +78,14 @@ private:
   };
   // the least-significant two bits of instruction addresses are always zero, so we can use them for flags.
   // this flag is used in all the set-associative caches to implement WS Clock eviction.
-  constexpr int SECOND_CHANCE = 1;
+  static constexpr int SECOND_CHANCE = 1;
   
   // === Exec thread data ===
-  constexpr int INT_CACHE_WAYS_SHIFT = 2;
-  constexpr int INT_CACHE_WAYS = 1 << INT_CACHE_WAYS_SHIFT;
-  constexpr int INT_CACHE_SETS_SHIFT = 4;
-  constexpr int INT_CACHE_SETS = 1 << INT_CACHE_SETS_SHIFT;
-  constexpr int INT_CACHE_SIZE = 1 << (INT_CACHE_SETS_SHIFT+INT_CACHE_WAYS_SHIFT);
+  static constexpr int INT_CACHE_WAYS_SHIFT = 2;
+  static constexpr int INT_CACHE_WAYS = 1 << INT_CACHE_WAYS_SHIFT;
+  static constexpr int INT_CACHE_SETS_SHIFT = 4;
+  static constexpr int INT_CACHE_SETS = 1 << INT_CACHE_SETS_SHIFT;
+  static constexpr int INT_CACHE_SIZE = 1 << (INT_CACHE_SETS_SHIFT+INT_CACHE_WAYS_SHIFT);
   /// set-associative cache for code blocks discovered this cycle
   u32 new_blocks_addrs[INT_CACHE_SIZE] {};
   std::vector<DecodedInstruction> new_blocks_instructions[INT_CACHE_SIZE];
@@ -97,9 +97,9 @@ private:
   /// when consulting the block table, we need to consider that Baseline may not have removed the invalidated blocks of the last cycle yet, either
   Bloom old_invalidation_mask = BloomNone;
 
-  constexpr int DISP_CACHE_WAYS_SHIFT = 2;
-  constexpr int DISP_CACHE_SETS_SHIFT = 8;
-  constexpr int DISP_CACHE_SIZE = 1 << (DISP_CACHE_SETS_SHIFT+DISP_CACHE_WAYS_SHIFT);
+  static constexpr int DISP_CACHE_WAYS_SHIFT = 2;
+  static constexpr int DISP_CACHE_SETS_SHIFT = 8;
+  static constexpr int DISP_CACHE_SIZE = 1 << (DISP_CACHE_SETS_SHIFT+DISP_CACHE_WAYS_SHIFT);
   /// only released by Exec when consulting the block table. only needs to be accessed by the JITs when compacting their code space.
   std::mutex dispatch_cache_mutex;
   /// set-associative cache for JIT blocks

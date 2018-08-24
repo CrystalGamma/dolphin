@@ -1,6 +1,6 @@
 #include "Core/PowerPC/InstructionClassifier.h"
 
-int InstructionClassifier::cycles(UGeckoInstruction inst)
+int InstructionClassifier::Cycles(UGeckoInstruction inst)
 {
   switch (inst.OPCD)
   {
