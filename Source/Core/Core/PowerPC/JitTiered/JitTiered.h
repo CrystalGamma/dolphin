@@ -17,7 +17,7 @@ private:
     // separate into different cache lines to avoid false sharing
     alignas(CACHELINE_SIZE) std::mutex mutex;
     Inner inner;
-  } sides[2] {};
+  } sides[2];
   alignas(CACHELINE_SIZE) int side;
   std::unique_lock<std::mutex> writerGuard;
 public:
