@@ -63,11 +63,32 @@ public:
 class JitTiered : public JitBase
 {
 private:
+  template<int bits>
+  static u32 XorFold(u32 address)
+  {
+    for (int i = 32; i > 0; i -= bits)
+    {
+      address = (address >> bits) ^ (address & ((1 << bits) - 1));
+    }
+    return address;
+  }
   typedef u64 Bloom;
   typedef void (*InterpreterFunc)(UGeckoInstruction);
   
   static Bloom BloomNone() { return 0; }
   static Bloom BloomAll() { return ~BloomNone(); }
+  static Bloom BloomRange(u32 first, u32 last)
+  { // we only have (guest) cacheline resolution;
+    first >>= 5;
+    last >>= 5;
+    Bloom res;
+    while (first <= last)
+    {
+      res |= 1 << XorFold<6>(first);
+      first += 1;
+    }
+    return res;
+  }
 
   struct DecodedInstruction
   {
@@ -158,20 +179,12 @@ private:
   /// XOR-fold address for interpreter block cache
   static u32 InterpreterCacheKey(u32 address)
   {
-    for (int i = 32; i > 0; i -= INT_CACHE_SETS_SHIFT)
-    {
-      address = (address >> INT_CACHE_SETS_SHIFT) ^ (address & ((1 << INT_CACHE_SETS_SHIFT) - 1));
-    }
-    return address;
+    return XorFold<INT_CACHE_SETS_SHIFT>(address >> 2);
   }
   /// XOR-fold address for dispatch cache
   static u32 DispatchCacheKey(u32 address)
   {
-    for (int i = 32; i > 0; i -= DISP_CACHE_SETS_SHIFT)
-    {
-      address = (address >> DISP_CACHE_SETS_SHIFT) ^ (address & ((1 << DISP_CACHE_SETS_SHIFT) - 1));
-    }
-    return address;
+    return XorFold<DISP_CACHE_SETS_SHIFT>(address >> 2);
   }
   static std::optional<int> FindInterpreterBlock(u32 *table, u32 key, u32 address);
   std::vector<DecodedInstruction> &CreateFreeBlock(u32 key, u32 address);
@@ -185,4 +198,9 @@ public:
   virtual void SingleStep();
   virtual void Run();
   virtual void Shutdown();
+
+  virtual void ClearSafe() { ClearCache(); }
+  virtual bool HandleFault(uintptr_t, SContext*) { return false; }
+  virtual void InvalidateICache(u32 address, u32 size, bool forced);
+  void CompileExceptionCheck(JitInterface::ExceptionType type) {}
 };

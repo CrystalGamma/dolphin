@@ -17,6 +17,32 @@ void JitTiered::ClearCache()
   baseline_report.GetWriter().invalidations.push_back({0,0xffffffff});
 }
 
+void JitTiered::InvalidateICache(u32 address, u32 size, bool forced)
+{
+  auto bloom = BloomRange(address, address + size);
+  for (int i = 0; i < DISP_CACHE_SIZE; i += 1)
+  {
+    if (dispatch_blocks[i].bloom & bloom)
+    {
+      dispatch_addrs[i] = 0;
+    }
+  }
+  auto &report = baseline_report.GetWriter();
+  u32 last_end = 0;
+  for (int i = 0; i < INT_CACHE_SIZE; i += 1)
+  { // TODO: not sure if inclusive/exclusive range in correct here … I need sleep :S
+    if ((new_blocks_addrs[i] & 0xfffffffc) < address + size && (new_blocks_addrs[i] & 0xfffffffc) + new_blocks_instructions[i].size()*4 > address)
+    {
+      new_blocks_addrs[i] = 0;
+    }
+    if (report.block_addrs[i] & 0xfffffffc) < address + size && (report.block_addrs[i] & 0xfffffffc) + report.block_ends[i] - last_end > address)
+    {
+      report.block_addrs[i] = 0;
+    }
+    last_end = report.block_ends[i];
+  }
+}
+
 std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, u32 address)
 {
   int start = key << INT_CACHE_WAYS_SHIFT;

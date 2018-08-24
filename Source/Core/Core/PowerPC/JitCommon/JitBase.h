@@ -57,9 +57,6 @@ class JitBase : public CPUCoreBase
     bool memcheck;
   };
 public:
-  // TODO: move this to JitCommonBase as well?
-  virtual void Jit(u32 em_address) = 0;
-
   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;
   virtual bool HandleStackFault() { return false; }
   virtual void InvalidateICache(u32 address, u32 size, bool forced) = 0;
@@ -143,6 +140,7 @@ public:
   virtual void InvalidateICache(u32 address, u32 size, bool forced) { GetBlockCache()->InvalidateICache(address, size, forced); }
   void ClearSafe() { GetBlockCache()->Clear(); }
   void CompileExceptionCheck(JitInterface::ExceptionType type);
+  virtual void Jit(u32 em_address) = 0;
 
   static constexpr std::size_t code_buffer_size = 32000;
 
