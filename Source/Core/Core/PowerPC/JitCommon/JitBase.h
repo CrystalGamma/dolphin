@@ -57,6 +57,7 @@ class JitBase : public CPUCoreBase
     bool memcheck;
   };
 public:
+  // TODO: move this to JitCommonBase as well?
   virtual void Jit(u32 em_address) = 0;
 
   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;

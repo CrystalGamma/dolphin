@@ -203,6 +203,7 @@ add_library(core
   PowerPC/PPCSymbolDB.cpp
   PowerPC/PPCTables.cpp
   PowerPC/Profiler.cpp
+  PowerPC/InstructionClassifier.cpp
   PowerPC/SignatureDB/CSVSignatureDB.cpp
   PowerPC/SignatureDB/DSYSignatureDB.cpp
   PowerPC/SignatureDB/MEGASignatureDB.cpp
@@ -222,6 +223,7 @@ add_library(core
   PowerPC/JitCommon/JitAsmCommon.cpp
   PowerPC/JitCommon/JitBase.cpp
   PowerPC/JitCommon/JitCache.cpp
+  PowerPC/JitTiered/JitTiered.cpp
 )
 
 if(_M_X86)

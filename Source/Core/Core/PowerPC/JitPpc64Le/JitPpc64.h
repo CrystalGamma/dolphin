@@ -71,7 +71,7 @@ private:
   }
 };
 
-class JitPpc64BlockCache : public JitBaseBlockCache
+class JitPpc64BlockCache
 {
 public:
   static constexpr int CACHE_SETS_SHIFT = 8;
@@ -92,8 +92,6 @@ public:
   static void *DispatchFast(DispatchCache *cache, u32 addr, bool invalidate);
   // insert or overwrite a block mapping in fast cache, evicting as necessary
   static void PutCache(DispatchCache *cache, u32 addr, void *target);
-private:
-  void WriteLinkBlock(const JitBlock::LinkData& source, const JitBlock* dest) {_assert_msg_(DYNA_REC, false, "unimplemented");}
 };
 
 class JitPpc64 : public JitBase
@@ -117,11 +115,7 @@ public:
   JitPpc64();
   ~JitPpc64() override;
 
-  virtual JitBaseBlockCache* GetBlockCache() override { return &block_cache; }
-
   virtual void Jit(u32 em_address) override {_assert_msg_(DYNA_REC, false, "unimplemented");}
-
-  virtual const CommonAsmRoutinesBase* GetAsmRoutines() override { return &millicode_addresses; }
 
   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) override {_assert_msg_(DYNA_REC, false, "unimplemented"); return false;}
   virtual bool HandleStackFault() override { return false; }
