@@ -57,9 +57,9 @@ public:
       return {};
     }
     side ^= 1;
-    YieldGuard guard(*this, std::unique_lock(sides[side]));
+    YieldGuard guard(*this, std::unique_lock(sides[side].mutex));
     writerGuard.swap(guard.guard);
-    return guard;
+    return std::make_optional(guard);
   }
 };
 
