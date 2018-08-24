@@ -11,13 +11,13 @@ constexpr int CACHELINE_SIZE = 128;
 template<typename Inner> struct HandShake {
 private:
   /// if we could detect whether a mutex is being waited on (theoretically possible in most mutex implementations) we wouldn't need this
-  std::atomic<int> select;
+  std::atomic<int> select = 0;
   struct
   {
     // separate into different cache lines to avoid false sharing
     alignas(CACHELINE_SIZE) std::mutex mutex;
     Inner inner;
-  } sides[2];
+  } sides[2] {};
   alignas(CACHELINE_SIZE) int side;
   std::unique_lock<std::mutex> writerGuard;
 public:
@@ -43,7 +43,6 @@ public:
     /// returns the side that will be freed after dropping this guard
     Inner& GetRef() { return parent.sides[1^parent.side].inner; }
   };
-  HandShake();
   
   // reader interface
   std::optional<ReaderGuard> TryRead();
@@ -203,7 +202,7 @@ public:
   virtual void ClearCache();
   virtual void SingleStep();
   virtual void Run();
-  virtual void Shutdown();
+  virtual void Shutdown() {}
 
   virtual void ClearSafe() { ClearCache(); }
   virtual bool HandleFault(uintptr_t, SContext*) { return false; }
