@@ -129,6 +129,7 @@ void JitTiered::InterpretBlock()
       for (u32 i = start; i < end; i += 1)
       {
         auto &inst = report.instructions[i];
+        NPC = PC + 4;
         inst.func(inst.inst);
         if (PowerPC::ppcState.Exceptions)
         {
@@ -174,6 +175,7 @@ void JitTiered::InterpretBlock()
     while (iter != free_block->end())
     {
       auto inst = *iter++;
+      NPC = PC + 4;
       inst.func(inst.inst);
       if (PowerPC::ppcState.Exceptions)
       {
@@ -220,6 +222,7 @@ void JitTiered::InterpretBlock()
     cycles += InstructionClassifier::Cycles(inst);
     auto func = PPCTables::GetInterpreterOp(inst);
     free_block->push_back({inst, cycles, func});
+    NPC = PC + 4;
     func(inst);
     if (PowerPC::ppcState.Exceptions)
     {
