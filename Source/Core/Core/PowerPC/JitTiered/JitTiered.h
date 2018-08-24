@@ -84,7 +84,7 @@ private:
   { // we only have (guest) cacheline resolution;
     first >>= 5;
     last >>= 5;
-    Bloom res;
+    Bloom res = BloomNone();
     while (first <= last)
     {
       res |= 1 << XorFold<6>(first);

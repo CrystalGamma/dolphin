@@ -111,7 +111,7 @@ void JitTiered::InterpretBlock()
   u32 cache_key = InterpreterCacheKey(start_addr);
   auto free_block_index = FindInterpreterBlock(new_blocks_addrs, cache_key, start_addr);
   std::vector<DecodedInstruction> *free_block;
-  u32 cycles;
+  u32 cycles = 0;
   if (!free_block_index.has_value())
   { // no free block found, look for compacted block
     auto report = baseline_report.GetWriter();
