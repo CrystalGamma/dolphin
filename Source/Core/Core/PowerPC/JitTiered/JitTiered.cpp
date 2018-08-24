@@ -71,7 +71,7 @@ std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, 
 
 std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 address)
 {
-  u32 *set = &new_blocks_addrs[key << INT_CACHE_WAYS_SHIFT];
+  u32 *set = table + (key << INT_CACHE_WAYS_SHIFT);
   for (int i = 0; i < INT_CACHE_WAYS; i += 1)
   {
     if ((set[i] & 0xfffffffc) == address)
@@ -165,7 +165,7 @@ void JitTiered::InterpretBlock()
   }
   else
   { // free block found
-    free_block = new_blocks_instructions + free_block_index;
+    free_block = &new_blocks_instructions + free_block_index;
     auto iter = free_block->begin();
     while (iter != free_block->end())
     {
