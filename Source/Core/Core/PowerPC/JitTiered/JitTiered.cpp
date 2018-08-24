@@ -1,5 +1,6 @@
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
+#include "Common/Logging/Log.h"
 #include "Core/CoreTiming.h"
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/InstructionClassifier.h"
@@ -114,6 +115,7 @@ void JitTiered::InterpretBlock()
   u32 cycles = 0;
   if (!free_block_index.has_value())
   { // no free block found, look for compacted block
+    INFO_LOG(DYNA_REC, "%8x: compacted block found", PC);
     auto report = baseline_report.GetWriter();
     auto comp_block = FindInterpreterBlock(report.block_addrs, cache_key, PC);
     u32 start = 0, end = 0;
@@ -165,6 +167,7 @@ void JitTiered::InterpretBlock()
   }
   else
   { // free block found
+    INFO_LOG(DYNA_REC, "%8x: free block found", PC);
     free_block = &new_blocks_instructions[*free_block_index];
     auto iter = free_block->begin();
     while (iter != free_block->end())
@@ -198,6 +201,7 @@ void JitTiered::InterpretBlock()
     }
   }
   // overrun: read more instructions
+  INFO_LOG(DYNA_REC, "%8x: block overrun", PC);
   do {
     PowerPC::CheckBreakPoints();
     auto inst = PowerPC::Read_Opcode(PC);
@@ -228,6 +232,7 @@ void JitTiered::InterpretBlock()
   } while (PC == NPC);
   PowerPC::ppcState.downcount -= cycles;
   PC = NPC;
+  INFO_LOG(DYNA_REC, "%8x: finished block", PC);
 }
 
 void JitTiered::SingleStep()
