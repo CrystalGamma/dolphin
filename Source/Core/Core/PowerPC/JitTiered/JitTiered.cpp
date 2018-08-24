@@ -71,10 +71,10 @@ std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, 
 
 std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 address)
 {
-  u32 *set = new_blocks_addrs + (key << INT_CACHE_WAYS_SHIFT);
+  u32 *set = &new_blocks_addrs + (key << INT_CACHE_WAYS_SHIFT);
   for (int i = 0; i < INT_CACHE_WAYS; i += 1)
   {
-    if (set[i] & 0xfffffffc == address)
+    if ((set[i] & 0xfffffffc) == address)
     {
       return i;
     }
@@ -95,7 +95,7 @@ void JitTiered::InterpretBlock()
       return;
     }
     PPCTables::GetInterpreterOp(inst)(inst);
-    PowerPC::ppcState.downcount -= InstructionClassifier(UGeckoInstruction(inst));
+    PowerPC::ppcState.downcount -= InstructionClassifier::Cycles(UGeckoInstruction(inst));
     if (PowerPC::ppcState.Exceptions)
     {
       PowerPC::CheckExceptions();
@@ -115,7 +115,7 @@ void JitTiered::InterpretBlock()
   if (!free_block_index.has_value())
   { // no free block found, look for compacted block
     auto report = baseline_report.GetWriter();
-    auto comp_block = FindInterpreterBlock(report.blocks_addrs, cache_key, PC);
+    auto comp_block = FindInterpreterBlock(report.block_addrs, cache_key, PC);
     u32 start = 0, end = 0;
     if (comp_block.has_value())
     {
@@ -144,13 +144,13 @@ void JitTiered::InterpretBlock()
       }
       if (start != end)
       {
+        cycles = last.cycles;
         auto &last = report.instructions[end - 1];
         if (InstructionClassifier::Redispatch(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
         { // even if the block didn't end here, we have to go back to dispatcher, because of e. g. invalidation or breakpoints
-          PowerPC::ppcState.downcount -= inst.cycles;
+          PowerPC::ppcState.downcount -= cycles;
           return;
         }
-        cycles = last.cycles;
       }
     }
     // overran the compacted block (or didn't find one), create free block
@@ -201,7 +201,7 @@ void JitTiered::InterpretBlock()
   do {
     PowerPC::CheckBreakPoints();
     auto inst = PowerPC::Read_Opcode(PC);
-    if (inst.hex == 0)
+    if (inst == 0)
     {
       PowerPC::CheckExceptions();
       return;
@@ -220,7 +220,7 @@ void JitTiered::InterpretBlock()
       PowerPC::ppcState.downcount -= cycles;
       return;
     }
-    if (InstructionClassifier::Redispatch(inst))
+    if (InstructionClassifier::Redispatch(UGeckoInstruction(inst)))
     {
       break;
     }
@@ -272,10 +272,11 @@ void JitTiered::Run()
         {
           CompactInterpreterBlocks();
           auto copy = baseline_report.GetWriter();
-          auto report = guard.GetRef();
-          std::memcpy(&report.block_addrs, &copy.blocks_addrs, sizeof(old_blocks_addrs));
-          std::memcpy(&report.block_ends, &copy.blocks_ends, sizeof(old_blocks_ends));
+          auto report = guard->GetRef();
+          std::memcpy(&report.block_addrs, &copy.block_addrs, sizeof(report.block_addrs));
+          std::memcpy(&report.block_ends, &copy.block_ends, sizeof(report.block_ends));
         }
       }
     } while (new_dc > 0 && *state == CPU::State::Running);
+  }
 }

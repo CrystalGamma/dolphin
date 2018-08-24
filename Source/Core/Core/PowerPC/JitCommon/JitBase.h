@@ -148,4 +148,4 @@ public:
   JitState js{};
 };
 
-void JitTrampoline(JitBase& jit, u32 em_address);
+void JitTrampoline(JitCommonBase& jit, u32 em_address);
