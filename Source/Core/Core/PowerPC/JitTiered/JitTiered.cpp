@@ -1,5 +1,6 @@
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
+#include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 
 void JitTiered::ClearCache()
@@ -35,13 +36,13 @@ std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, 
   }
   new_blocks_clocks[key] = i;
   new_blocks_addrs[start + i] = address;
-  new_blocks_instructions[start + i].instructions.clear();
+  new_blocks_instructions[start + i].clear();
   return new_blocks_instructions[start + i];
 }
 
 std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 address)
 {
-  FreeBlockHeader *set = new_blocks + (key << INT_CACHE_WAYS_SHIFT);
+  std::vector<DecodedInstruction> *set = new_blocks + (key << INT_CACHE_WAYS_SHIFT);
   for (int i = 0; i < INT_CACHE_WAYS; i += 1)
   {
     if (set[i].start_addr & 0xfffffffc == address)
@@ -85,14 +86,14 @@ void JitTiered::InterpretBlock()
   if (!free_block_index.has_value())
   { // no free block found, look for compacted block
     auto report = baseline_report.GetWriter();
-    auto comp_block = FindInterpreterBlock(report.blocks_addrs, key, PC);
+    auto comp_block = FindInterpreterBlock(report.blocks_addrs, cache_key, PC);
     u32 start = 0, end = 0;
     if (comp_block.has_value())
     {
-      end = report.blocks_ends[comp_block];
+      end = report.block_ends[comp_block];
       if (comp_block != 0)
       {
-        start = report.blocks_ends[comp_block - 1];
+        start = report.block_ends[comp_block - 1];
       }
       for (u32 i = start; i < end; i += 1)
       {
@@ -220,7 +221,7 @@ void JitTiered::CompactInterpreterBlocks()
         report.instructions.push_back(inst);
       }
     }
-    report.blocks_ends[i] = compacted_instructions.size();
+    report.block_ends[i] = compacted_instructions.size();
   }
 }
 
