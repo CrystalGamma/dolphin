@@ -1,5 +1,7 @@
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
+#include "Core/CoreTiming.h"
+#include "Core/PowerPC/InstructionClassifier.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 
@@ -42,12 +44,12 @@ std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, 
 
 std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 address)
 {
-  std::vector<DecodedInstruction> *set = new_blocks + (key << INT_CACHE_WAYS_SHIFT);
+  u32 *set = new_blocks_addrs + (key << INT_CACHE_WAYS_SHIFT);
   for (int i = 0; i < INT_CACHE_WAYS; i += 1)
   {
-    if (set[i].start_addr & 0xfffffffc == address)
+    if (set[i] & 0xfffffffc == address)
     {
-      return set[i];
+      return i;
     }
   }
   return {};
@@ -59,13 +61,13 @@ void JitTiered::InterpretBlock()
   if (PC == 0)
   {
     // zero is a null value in the cache tags, so handle it specially in case code jumps there
-    auto inst = PowerPC::Read_Opcode(0);
-    if (inst.hex == 0)
+    u32 inst = PowerPC::Read_Opcode(0);
+    if (inst == 0)
     {
       PowerPC::CheckExceptions();
       return;
     }
-    inst.func(inst.inst);
+    PowerPC::GetInterpreterOp(inst)(inst);
     PowerPC::ppcState.downcount -= inst.cycles;
     if (PowerPC::ppcState.Exceptions)
     {
