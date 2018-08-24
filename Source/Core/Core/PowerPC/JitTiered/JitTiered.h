@@ -57,7 +57,7 @@ public:
       return {};
     }
     side ^= 1;
-    YieldGuard guard = {*this, std::unique_lock(sides[side])};
+    YieldGuard guard = YieldGuard(*this, std::unique_lock(sides[side]));
     writerGuard.swap(guard.guard);
   }
 };
