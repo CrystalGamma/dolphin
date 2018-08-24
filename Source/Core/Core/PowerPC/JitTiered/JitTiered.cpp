@@ -155,6 +155,7 @@ void JitTiered::InterpretBlock()
         }
       }
     }
+    INFO_LOG(DYNA_REC, "%8x: compacted block overrun", PC);
     // overran the compacted block (or didn't find one), create free block
     free_block = &CreateFreeBlock(cache_key, start_addr);
     if (free_block->empty())
@@ -178,16 +179,17 @@ void JitTiered::InterpretBlock()
       {
         PowerPC::CheckExceptions();
         PowerPC::ppcState.downcount -= inst.cycles;
+        INFO_LOG(DYNA_REC, "%8x: free block exception exit", PC);
         return;
       }
       PC += 4;
       if (NPC != PC)
       {
+        INFO_LOG(DYNA_REC, "%8x: jumped out of free block to %8x", PC, NPC);
         PowerPC::ppcState.downcount -= inst.cycles;
         PC = NPC;
         return;
       }
-      PC = NPC;
     }
     if (free_block->size() > 0)
     {
@@ -196,6 +198,7 @@ void JitTiered::InterpretBlock()
       if (InstructionClassifier::Redispatch(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
       {
         PowerPC::ppcState.downcount -= cycles;
+        INFO_LOG(DYNA_REC, "%8x: hit context sync or breakpoint", PC);
         return;
       }
     }
