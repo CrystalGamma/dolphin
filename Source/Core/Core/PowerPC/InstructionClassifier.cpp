@@ -70,6 +70,7 @@ int InstructionClassifier::Cycles(UGeckoInstruction inst)
       return 3;
     default: return 1;
     }
+  default: return 1;
   }
 }
 
@@ -77,5 +78,5 @@ bool InstructionClassifier::Redispatch(UGeckoInstruction inst)
 {
   return inst.OPCD == 19 && (inst.SUBOP10 == 150 || inst.SUBOP10 == 18)  // isync, rfid
     || inst.OPCD == 31 && inst.SUBOP10 == 146// mtmsr
-    || inst.OPCD == 17 && (inst & 2) // sc
+    || inst.OPCD == 17 && (inst.hex & 2); // sc
 }

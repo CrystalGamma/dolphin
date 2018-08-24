@@ -66,8 +66,8 @@ private:
   typedef u64 Bloom;
   typedef void (*InterpreterFunc)(UGeckoInstruction);
   
-  static Bloom BloomAll() constexpr { return 0xffff_ffff_ffff_ffff; }
-  static Bloom BloomNone() constexpr { return 0; }
+  static Bloom BloomNone() { return 0; }
+  static Bloom BloomAll() { return ~BloomNone(); }
 
   struct DecodedInstruction
   {

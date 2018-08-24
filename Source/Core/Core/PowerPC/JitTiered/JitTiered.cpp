@@ -6,12 +6,12 @@ void JitTiered::ClearCache()
 {
   // invalidate all caches
   std::memset(&new_blocks_addrs, 0, sizeof(new_blocks_addrs));
-  std::memset(&baseline_report.GetWriter().blocks_addrs, 0, sizeof(baseline_report.GetWriter().blocks_addrs));
+  std::memset(&baseline_report.GetWriter().block_addrs, 0, sizeof(baseline_report.GetWriter().block_addrs));
   std::memset(&dispatch_addrs, 0, sizeof(dispatch_addrs));
   // prevent us from starting any JIT blocks until we are sure Baseline has cleared the block table
   invalidation_mask = BloomAll();
   // signal that everything has been invalidated
-  baseline_report.GetWriter().invalidations.push_back({0,0xffff_ffff});
+  baseline_report.GetWriter().invalidations.push_back({0,0xffffffff});
 }
 
 std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, u32 address)
