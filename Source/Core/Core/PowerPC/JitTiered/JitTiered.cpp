@@ -1,6 +1,7 @@
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
 #include "Core/CoreTiming.h"
+#include "Core/HW/CPU.h"
 #include "Core/PowerPC/InstructionClassifier.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -35,7 +36,7 @@ void JitTiered::InvalidateICache(u32 address, u32 size, bool forced)
     {
       new_blocks_addrs[i] = 0;
     }
-    if (report.block_addrs[i] & 0xfffffffc) < address + size && (report.block_addrs[i] & 0xfffffffc) + report.block_ends[i] - last_end > address)
+    if ((report.block_addrs[i] & 0xfffffffc) < address + size && (report.block_addrs[i] & 0xfffffffc) + report.block_ends[i] - last_end > address)
     {
       report.block_addrs[i] = 0;
     }
@@ -93,8 +94,8 @@ void JitTiered::InterpretBlock()
       PowerPC::CheckExceptions();
       return;
     }
-    PowerPC::GetInterpreterOp(inst)(inst);
-    PowerPC::ppcState.downcount -= inst.cycles;
+    PPCTables::GetInterpreterOp(inst)(inst);
+    PowerPC::ppcState.downcount -= InstructionClassifier(UGeckoInstruction(inst));
     if (PowerPC::ppcState.Exceptions)
     {
       PowerPC::CheckExceptions();
@@ -158,14 +159,14 @@ void JitTiered::InterpretBlock()
     {
       for (u32 i = start; i < end; i += 1)
       {
-        free_block->push_back(compacted_instructions[i]);
+        free_block->push_back(report.instructions[i]);
       }
     }
   }
   else
   { // free block found
-    free_block = free_block_instructions + free_block_index;
-    iter = free_block->begin();
+    free_block = new_blocks_instructions + free_block_index;
+    auto iter = free_block->begin();
     while (iter != free_block->end())
     {
       auto inst = *iter++;
@@ -210,7 +211,7 @@ void JitTiered::InterpretBlock()
       break;
     }
     cycles += InstructionClassifier::Cycles(inst);
-    auto func = PPCTables::GetInterpreterOp(op.inst)
+    auto func = PPCTables::GetInterpreterOp(inst)
     free_block->push_back({inst, cycles, func});
     func(inst);
     if (PowerPC::ppcState.Exceptions)
@@ -249,7 +250,7 @@ void JitTiered::CompactInterpreterBlocks()
         report.instructions.push_back(inst);
       }
     }
-    report.block_ends[i] = compacted_instructions.size();
+    report.block_ends[i] = report.instructions.size();
   }
 }
 
