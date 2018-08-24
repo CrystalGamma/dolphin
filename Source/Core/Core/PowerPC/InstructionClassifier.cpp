@@ -1,6 +1,8 @@
 #include "Core/PowerPC/InstructionClassifier.h"
 
-int InstructionClassifier::Cycles(UGeckoInstruction inst)
+namespace InstructionClassifier
+{
+int Cycles(UGeckoInstruction inst)
 {
   switch (inst.OPCD)
   {
@@ -77,4 +79,5 @@ bool InstructionClassifier::Redispatch(UGeckoInstruction inst)
   return inst.OPCD == 19 && (inst.SUBOP10 == 150 || inst.SUBOP10 == 18)  // isync, rfid
     || inst.OPCD == 31 && inst.SUBOP10 == 146// mtmsr
     || inst.OPCD == 17 && (inst & 2) // sc
+}
 }

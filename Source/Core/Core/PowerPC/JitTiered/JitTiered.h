@@ -89,7 +89,7 @@ private:
   /// set-associative cache for code blocks discovered this cycle
   u32 new_blocks_addrs[INT_CACHE_SIZE] {};
   std::vector<DecodedInstruction> new_blocks_instructions[INT_CACHE_SIZE];
-  u8 new_blocks_clocks[INT_SETS] {};
+  u8 new_blocks_clocks[INT_CACHE_SETS] {};
 
   /// bloom filter for blocks invalidated this cycle. since interpreter blocks are invalidated immediately,
   /// this is only used when consulting the block table (managed by Baseline ⇒ asynchronously invalidated)
@@ -105,7 +105,7 @@ private:
   /// set-associative cache for JIT blocks
   u32 dispatch_addrs[DISP_CACHE_SIZE] {};
   /// flag for the dispatch cache indicating that it was made by the 
-  constexpr int OPTIMIZER_BLOCK = 2;
+  static constexpr int OPTIMIZER_BLOCK = 2;
   /// other half of the dispatch cache. separated for density reasons
   struct JitBlockBody
   {
