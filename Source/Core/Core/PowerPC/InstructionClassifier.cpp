@@ -1,4 +1,4 @@
-#include "PPCTables.h"
+#include "Core/PowerPC/InstructionClassifier.h"
 
 int InstructionClassifier::cycles(UGeckoInstruction inst)
 {

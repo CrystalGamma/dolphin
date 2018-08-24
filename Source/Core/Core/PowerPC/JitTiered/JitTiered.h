@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 
 #include "Core/PowerPC/JitCommon/JitBase.h"
 

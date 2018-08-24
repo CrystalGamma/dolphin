@@ -1,5 +1,7 @@
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
+#include "Core/PowerPC/PowerPC.h"
+
 void JitTiered::ClearCache()
 {
   // invalidate all caches
