@@ -165,7 +165,7 @@ void JitTiered::InterpretBlock()
   }
   else
   { // free block found
-    free_block = &new_blocks_instructions + free_block_index;
+    free_block = &new_blocks_instructions[*free_block_index];
     auto iter = free_block->begin();
     while (iter != free_block->end())
     {
@@ -211,7 +211,7 @@ void JitTiered::InterpretBlock()
       break;
     }
     cycles += InstructionClassifier::Cycles(inst);
-    auto func = PPCTables::GetInterpreterOp(inst)
+    auto func = PPCTables::GetInterpreterOp(inst);
     free_block->push_back({inst, cycles, func});
     func(inst);
     if (PowerPC::ppcState.Exceptions)

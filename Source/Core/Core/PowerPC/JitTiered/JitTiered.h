@@ -34,12 +34,13 @@ public:
   // dropping a value of this type will release the other side to the reader
   class YieldGuard
   {
+    friend class HandShake<Inner>;
   private:
     HandShake &parent;
     std::unique_lock<std::mutex> guard;
   public:
     /// returns the side that will be freed after dropping this guard
-    Inner& GetRef() { return parent.sides[1^side].inner; }
+    Inner& GetRef() { return parent.sides[1^parent.side].inner; }
   };
   HandShake();
   
@@ -74,7 +75,7 @@ private:
   }
   typedef u64 Bloom;
   typedef void (*InterpreterFunc)(UGeckoInstruction);
-  
+
   static Bloom BloomNone() { return 0; }
   static Bloom BloomAll() { return ~BloomNone(); }
   static Bloom BloomRange(u32 first, u32 last)
@@ -100,6 +101,9 @@ private:
   // the least-significant two bits of instruction addresses are always zero, so we can use them for flags.
   // this flag is used in all the set-associative caches to implement WS Clock eviction.
   static constexpr int SECOND_CHANCE = 1;
+  
+  /// try submitting a report to Baseline approximately every 64K downcount
+  static constexpr int BASELINE_REPORT_SHIFT = 16;
   
   // === Exec thread data ===
   static constexpr int INT_CACHE_WAYS_SHIFT = 2;
