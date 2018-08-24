@@ -71,7 +71,7 @@ std::vector<JitTiered::DecodedInstruction> &JitTiered::CreateFreeBlock(u32 key, 
 
 std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 address)
 {
-  u32 *set = &new_blocks_addrs + (key << INT_CACHE_WAYS_SHIFT);
+  u32 *set = &new_blocks_addrs[key << INT_CACHE_WAYS_SHIFT];
   for (int i = 0; i < INT_CACHE_WAYS; i += 1)
   {
     if ((set[i] & 0xfffffffc) == address)
@@ -119,10 +119,10 @@ void JitTiered::InterpretBlock()
     u32 start = 0, end = 0;
     if (comp_block.has_value())
     {
-      end = report.block_ends[comp_block];
+      end = report.block_ends[*comp_block];
       if (comp_block != 0)
       {
-        start = report.block_ends[comp_block - 1];
+        start = report.block_ends[*comp_block - 1];
       }
       for (u32 i = start; i < end; i += 1)
       {
@@ -144,8 +144,8 @@ void JitTiered::InterpretBlock()
       }
       if (start != end)
       {
-        cycles = last.cycles;
         auto &last = report.instructions[end - 1];
+        cycles = last.cycles;
         if (InstructionClassifier::Redispatch(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
         { // even if the block didn't end here, we have to go back to dispatcher, because of e. g. invalidation or breakpoints
           PowerPC::ppcState.downcount -= cycles;
