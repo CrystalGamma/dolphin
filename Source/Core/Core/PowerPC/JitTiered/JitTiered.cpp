@@ -275,6 +275,7 @@ void JitTiered::Run()
     do {
       int dc = new_dc;
       InterpretBlock();
+      CPU::Break();
       new_dc = PowerPC::ppcState.downcount;
       if ((new_dc >> BASELINE_REPORT_SHIFT) - (dc >> BASELINE_REPORT_SHIFT) > 0)
       {
