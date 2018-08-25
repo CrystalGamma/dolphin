@@ -115,12 +115,12 @@ void JitTiered::InterpretBlock()
   u32 cycles = 0;
   if (!free_block_index.has_value())
   { // no free block found, look for compacted block
-    INFO_LOG(DYNA_REC, "%8x: compacted block found", PC);
     auto report = baseline_report.GetWriter();
     auto comp_block = FindInterpreterBlock(report.block_addrs, cache_key, PC);
     u32 start = 0, end = 0;
     if (comp_block.has_value())
     {
+      INFO_LOG(DYNA_REC, "%8x: compacted block found", PC);
       end = report.block_ends[*comp_block];
       if (comp_block != 0)
       {
@@ -156,7 +156,6 @@ void JitTiered::InterpretBlock()
         }
       }
     }
-    INFO_LOG(DYNA_REC, "%8x: compacted block overrun", PC);
     // overran the compacted block (or didn't find one), create free block
     free_block = &CreateFreeBlock(cache_key, start_addr);
     if (free_block->empty())
@@ -237,8 +236,8 @@ void JitTiered::InterpretBlock()
     PC += 4;
   } while (PC == NPC);
   PowerPC::ppcState.downcount -= cycles;
+  INFO_LOG(DYNA_REC, "%8x: finished block, going to %8x", PC, NPC);
   PC = NPC;
-  INFO_LOG(DYNA_REC, "%8x: finished block", PC);
 }
 
 void JitTiered::SingleStep()
