@@ -7,6 +7,8 @@
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 
+static constexpr EXCEPTION_SYNC = ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
+
 void JitTiered::ClearCache()
 {
   // invalidate all caches
@@ -130,13 +132,14 @@ void JitTiered::InterpretBlock()
       {
         auto &inst = report.instructions[i];
         NPC = PC + 4;
-	u32 exc = PowerPC::ppcState.Exceptions;
+	//u32 exc = PowerPC::ppcState.Exceptions;
         inst.func(inst.inst);
-        if (PowerPC::ppcState.Exceptions != exc)
+        if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
         {
           INFO_LOG(DYNA_REC, "%8x: compacted block exception exit", PC);
           PowerPC::CheckExceptions();
           PowerPC::ppcState.downcount -= inst.cycles;
+          PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
           return;
         }
         if (NPC != PC + 4)
@@ -179,13 +182,14 @@ void JitTiered::InterpretBlock()
     {
       auto inst = *iter++;
       NPC = PC + 4;
-      u32 exc = PowerPC::ppcState.Exceptions;
+      //u32 exc = PowerPC::ppcState.Exceptions;
       inst.func(inst.inst);
-      if (PowerPC::ppcState.Exceptions != exc)
+      if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
       {
         PowerPC::CheckExceptions();
         PowerPC::ppcState.downcount -= inst.cycles;
         INFO_LOG(DYNA_REC, "%8x: free block exception exit", PC);
+        PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
         return;
       }
       PC += 4;
@@ -230,13 +234,14 @@ void JitTiered::InterpretBlock()
     auto func = PPCTables::GetInterpreterOp(inst);
     free_block->push_back({inst, cycles, func});
     NPC = PC + 4;
-    u32 exc = PowerPC::ppcState.Exceptions;
+    //u32 exc = PowerPC::ppcState.Exceptions;
     func(inst);
-    if (PowerPC::ppcState.Exceptions != exc)
+    if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
       INFO_LOG(DYNA_REC, "%8x: exception exit", PC);
       PowerPC::CheckExceptions();
       PowerPC::ppcState.downcount -= cycles;
+        PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
       return;
     }
     if (InstructionClassifier::Redispatch(UGeckoInstruction(inst)))
