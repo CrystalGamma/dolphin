@@ -133,12 +133,14 @@ void JitTiered::InterpretBlock()
         inst.func(inst.inst);
         if (PowerPC::ppcState.Exceptions)
         {
+          INFO_LOG(DYNA_REC, "%8x: compacted block exception exit", PC);
           PowerPC::CheckExceptions();
           PowerPC::ppcState.downcount -= inst.cycles;
           return;
         }
         if (NPC != PC + 4)
         {
+          INFO_LOG(DYNA_REC, "%8x: compacted block finished", PC);
           PowerPC::ppcState.downcount -= inst.cycles;
           PC = NPC;
           return;
@@ -151,6 +153,7 @@ void JitTiered::InterpretBlock()
         cycles = last.cycles;
         if (InstructionClassifier::Redispatch(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
         { // even if the block didn't end here, we have to go back to dispatcher, because of e. g. invalidation or breakpoints
+          INFO_LOG(DYNA_REC, "%8x: hit context sync or breakpoint", PC);
           PowerPC::ppcState.downcount -= cycles;
           return;
         }
@@ -211,11 +214,13 @@ void JitTiered::InterpretBlock()
     auto inst = PowerPC::Read_Opcode(PC);
     if (inst == 0)
     {
+      INFO_LOG(DYNA_REC, "%8x: instruction fetch exception", PC);
       PowerPC::CheckExceptions();
       return;
     }
     if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
     {
+      INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
       break;
     }
     cycles += InstructionClassifier::Cycles(inst);
@@ -225,6 +230,7 @@ void JitTiered::InterpretBlock()
     func(inst);
     if (PowerPC::ppcState.Exceptions)
     {
+      INFO_LOG(DYNA_REC, "%8x: exception exit", PC);
       PowerPC::CheckExceptions();
       PowerPC::ppcState.downcount -= cycles;
       return;
