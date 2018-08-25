@@ -29,10 +29,13 @@ public:
   public:
     // a concurrency guru should probably check whether these memory orders are correct;
     // select is only ever written from the writer, so we shouldn't need to aquire it when reading
-    ReaderGuard(HandShake &par) : parent(par), guard(parent.sides[select.load(std::memory_order_relaxed)]) {}
+    ReaderGuard(HandShake &par) : parent(par), guard(par.sides[par.select.load(std::memory_order_relaxed)]) {}
     // announces a switch
-    ~ReaderGuard() { select.store(std::memory_order_release) = select.load(std::memory_order_relaxed) ^ 1; }
-    Inner& GetRef() { return parent.sides[select.load(std::memory_order_relaxed)].inner; }
+    ~ReaderGuard()
+    {
+      parent.select.store(std::memory_order_release) = parent.select.load(std::memory_order_relaxed) ^ 1;
+    }
+    Inner& GetRef() { return parent.sides[parent.select.load(std::memory_order_relaxed)].inner; }
   };
   // dropping a value of this type will release the other side to the reader
   class YieldGuard
