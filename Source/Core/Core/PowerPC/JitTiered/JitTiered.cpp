@@ -276,7 +276,6 @@ void JitTiered::Run()
   while (*state == CPU::State::Running)
   {
     CoreTiming::Advance();
-        CPU::Break();
     int new_dc = PowerPC::ppcState.downcount;
     do {
       int dc = new_dc;
