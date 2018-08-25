@@ -306,7 +306,7 @@ void JitTiered::Run()
   }
 }
 
-void BaselineIteration()
+void JitTiered::BaselineIteration()
 {
   {
     auto guard = baseline_report.Wait();
