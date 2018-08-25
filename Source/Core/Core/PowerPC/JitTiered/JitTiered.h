@@ -33,7 +33,7 @@ public:
     // announces a switch
     ~ReaderGuard()
     {
-      parent.select.store(std::memory_order_release) = parent.select.load(std::memory_order_relaxed) ^ 1;
+      parent.select.store(parent.select.load(std::memory_order_relaxed) ^ 1, std::memory_order_release);
     }
     Inner& GetRef() { return parent.sides[parent.select.load(std::memory_order_relaxed)].inner; }
   };
