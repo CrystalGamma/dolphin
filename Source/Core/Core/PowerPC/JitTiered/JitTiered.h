@@ -29,7 +29,7 @@ public:
   public:
     // a concurrency guru should probably check whether these memory orders are correct;
     // select is only ever written from the writer, so we shouldn't need to aquire it when reading
-    ReaderGuard(HandShake &par) : parent(par), guard(par.sides[par.select.load(std::memory_order_relaxed)]) {}
+    ReaderGuard(HandShake &par) : parent(par), guard(par.sides[par.select.load(std::memory_order_relaxed)].mutex) {}
     // announces a switch
     ~ReaderGuard()
     {
