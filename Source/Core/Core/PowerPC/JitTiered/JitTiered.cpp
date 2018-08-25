@@ -178,8 +178,9 @@ void JitTiered::InterpretBlock()
     {
       auto inst = *iter++;
       NPC = PC + 4;
+      u32 exc = PowerPC::ppcState.Exceptions;
       inst.func(inst.inst);
-      if (PowerPC::ppcState.Exceptions)
+      if (PowerPC::ppcState.Exceptions != exc)
       {
         PowerPC::CheckExceptions();
         PowerPC::ppcState.downcount -= inst.cycles;
