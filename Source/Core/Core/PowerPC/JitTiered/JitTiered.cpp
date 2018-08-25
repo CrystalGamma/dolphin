@@ -140,7 +140,7 @@ void JitTiered::InterpretBlock()
         }
         if (NPC != PC + 4)
         {
-          INFO_LOG(DYNA_REC, "%8x: compacted block finished", PC);
+          INFO_LOG(DYNA_REC, "%8x: compacted block finished (downcount %d)", PC, PowerPC::ppcState.downcount);
           PowerPC::ppcState.downcount -= inst.cycles;
           PC = NPC;
           return;
@@ -189,7 +189,7 @@ void JitTiered::InterpretBlock()
       PC += 4;
       if (NPC != PC)
       {
-        INFO_LOG(DYNA_REC, "%8x: jumped out of free block to %8x", PC, NPC);
+        INFO_LOG(DYNA_REC, "%8x: jumped out of free block to %8x (downcount %d)", PC, NPC, PowerPC::ppcState.downcount);
         PowerPC::ppcState.downcount -= inst.cycles;
         PC = NPC;
         return;
@@ -242,7 +242,7 @@ void JitTiered::InterpretBlock()
     PC += 4;
   } while (PC == NPC);
   PowerPC::ppcState.downcount -= cycles;
-  INFO_LOG(DYNA_REC, "%8x: finished block, going to %8x", PC, NPC);
+  INFO_LOG(DYNA_REC, "%8x: finished block, going to %8x (downcount %d)", PC, NPC, PowerPC::ppcState.downcount);
   PC = NPC;
 }
 
