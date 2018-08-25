@@ -208,7 +208,7 @@ void JitTiered::InterpretBlock()
     }
   }
   // overrun: read more instructions
-  INFO_LOG(DYNA_REC, "%8x: block overrun", PC);
+  //INFO_LOG(DYNA_REC, "%8x: block overrun", PC);
   do {
     PowerPC::CheckBreakPoints();
     auto inst = PowerPC::Read_Opcode(PC);
@@ -277,10 +277,10 @@ void JitTiered::Run()
   {
     CoreTiming::Advance();
     int new_dc = PowerPC::ppcState.downcount;
+    CPU::Break();
     do {
       int dc = new_dc;
       InterpretBlock();
-      CPU::Break();
       new_dc = PowerPC::ppcState.downcount;
       if ((new_dc >> BASELINE_REPORT_SHIFT) - (dc >> BASELINE_REPORT_SHIFT) > 0)
       {
