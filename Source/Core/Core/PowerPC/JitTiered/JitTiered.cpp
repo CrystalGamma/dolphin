@@ -77,7 +77,7 @@ std::optional<int> JitTiered::FindInterpreterBlock(u32 *table, u32 key, u32 addr
   {
     if ((set[i] & 0xfffffffc) == address)
     {
-      return i;
+      return i + (key << INT_CACHE_WAYS_SHIFT);
     }
   }
   return {};
