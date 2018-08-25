@@ -130,8 +130,9 @@ void JitTiered::InterpretBlock()
       {
         auto &inst = report.instructions[i];
         NPC = PC + 4;
+	u32 exc = PowerPC::ppcState.Exceptions;
         inst.func(inst.inst);
-        if (PowerPC::ppcState.Exceptions)
+        if (PowerPC::ppcState.Exceptions != exc)
         {
           INFO_LOG(DYNA_REC, "%8x: compacted block exception exit", PC);
           PowerPC::CheckExceptions();
@@ -216,6 +217,7 @@ void JitTiered::InterpretBlock()
     if (inst == 0)
     {
       INFO_LOG(DYNA_REC, "%8x: instruction fetch exception", PC);
+      PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
       PowerPC::CheckExceptions();
       return;
     }
@@ -228,8 +230,9 @@ void JitTiered::InterpretBlock()
     auto func = PPCTables::GetInterpreterOp(inst);
     free_block->push_back({inst, cycles, func});
     NPC = PC + 4;
+    u32 exc = PowerPC::ppcState.Exceptions;
     func(inst);
-    if (PowerPC::ppcState.Exceptions)
+    if (PowerPC::ppcState.Exceptions != exc)
     {
       INFO_LOG(DYNA_REC, "%8x: exception exit", PC);
       PowerPC::CheckExceptions();
