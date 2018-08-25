@@ -11,14 +11,14 @@ constexpr int CACHELINE_SIZE = 128;
 template<typename Inner> struct HandShake {
 private:
   /// if we could detect whether a mutex is being waited on (theoretically possible in most mutex implementations) we wouldn't need this
-  std::atomic<int> select = 0;
+  std::atomic<int> select = 1;
   struct
   {
     // separate into different cache lines to avoid false sharing
     alignas(CACHELINE_SIZE) std::mutex mutex;
     Inner inner;
   } sides[2];
-  alignas(CACHELINE_SIZE) int side;
+  alignas(CACHELINE_SIZE) int side = 0;
   std::unique_lock<std::mutex> writerGuard;
 public:
   class ReaderGuard
@@ -103,8 +103,10 @@ private:
   // this flag is used in all the set-associative caches to implement WS Clock eviction.
   static constexpr int SECOND_CHANCE = 1;
   
-  /// try submitting a report to Baseline approximately every 64K downcount
+  /// try submitting a report to Baseline at least approximately every 64K downcount
   static constexpr int BASELINE_REPORT_SHIFT = 16;
+  /// run the Baseline code on the Exec thread; should default to false for subclasses with actual compilation in them
+  bool on_thread_compilation = true;
   
   // === Exec thread data ===
   static constexpr int INT_CACHE_WAYS_SHIFT = 2;
@@ -196,6 +198,8 @@ private:
   
   void InterpretBlock();
   void CompactInterpreterBlocks();
+
+  virtual void BaselineIteration();
 public:
   virtual const char *GetName() const {return "TieredGeneric";}
   virtual void Init() {}

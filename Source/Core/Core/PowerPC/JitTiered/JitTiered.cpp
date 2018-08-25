@@ -287,9 +287,14 @@ void JitTiered::Run()
       new_dc = PowerPC::ppcState.downcount;
       if ((new_dc >> BASELINE_REPORT_SHIFT) - (dc >> BASELINE_REPORT_SHIFT) > 0)
       {
+        if (on_thread_compilation)
+        {
+          BaselineIteration();
+        }
         auto guard = baseline_report.Yield();
         if (guard.has_value())
         {
+          std::memset(&new_blocks_addrs, 0, sizeof(new_blocks_addrs));
           CompactInterpreterBlocks();
           auto copy = baseline_report.GetWriter();
           auto report = guard->GetRef();
@@ -299,4 +304,13 @@ void JitTiered::Run()
       }
     } while (new_dc > 0 && *state == CPU::State::Running);
   }
+}
+
+void BaselineIteration()
+{
+  {
+    auto guard = baseline_report.Wait();
+    // subclasses should do the most urgent of compilation, as well as invalidation, while holding the guard
+  }
+  // do less important compilation and cleanup (e. g. code space compaction) here to give Exec time to switch
 }
