@@ -277,13 +277,13 @@ void JitTiered::Run()
   {
     CoreTiming::Advance();
     int new_dc = PowerPC::ppcState.downcount;
-    CPU::Break();
     do {
       int dc = new_dc;
       InterpretBlock();
       new_dc = PowerPC::ppcState.downcount;
       if ((new_dc >> BASELINE_REPORT_SHIFT) - (dc >> BASELINE_REPORT_SHIFT) > 0)
       {
+        CPU::Break();
         auto guard = baseline_report.Yield();
         if (guard.has_value())
         {
