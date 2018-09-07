@@ -217,10 +217,9 @@ static void DoOutput(const std::vector<Instruction>& table,
 
 static void ReadTable(std::istream& in, std::vector<std::vector<std::string>>& rows)
 {
-  while (!in.eof())
+  std::string line;
+  while (std::getline(in, line))
   {
-    std::string line;
-    std::getline(in, line);
     std::vector<std::string>::size_type nextpos, pos = 0;
     std::vector<std::string> row;
     if (line.empty())
