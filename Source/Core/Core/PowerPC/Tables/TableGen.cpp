@@ -132,7 +132,7 @@ static void CreateTable(std::vector<Instruction>& table, std::vector<DecodingEnt
   }
   entry.instructions <<= 64 + start - end;
   entry.subtables <<= 64 + start - end;
-  const int offset = entry.subtable_offset;
+  const size_t offset = entry.subtable_offset;
   for (auto& i : subtables)
   {
     // WARNING: may invalidate 'entry'
