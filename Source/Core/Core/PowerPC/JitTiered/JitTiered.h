@@ -81,7 +81,8 @@ private:
     InterpreterFunc func;
     UGeckoInstruction inst;
     /// prefix sum of estimated cycles
-    u32 cycles;
+    u32 cycles : 31;
+    u32 uses_fpu : 1;
   };
   std::vector<DecodedInstruction> inst_cache;
   /// offset in inst_cache at which new instructions

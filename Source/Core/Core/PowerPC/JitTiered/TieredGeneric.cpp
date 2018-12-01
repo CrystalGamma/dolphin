@@ -137,6 +137,15 @@ void JitTieredGeneric::InterpretBlock()
     {
       auto& inst = inst_cache[pos];
       NPC = PC + 4;
+      if (inst.uses_fpu && !MSR.FP)
+      {
+        INFO_LOG(DYNA_REC, "%8x: fresh block FP exception exit", PC);
+        PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
+        PowerPC::CheckExceptions();
+        PowerPC::ppcState.downcount -= inst.cycles;
+        PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
+        return;
+      }
       inst.func(inst.inst);
       if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
       {
@@ -201,10 +210,20 @@ void JitTieredGeneric::InterpretBlock()
       }
       cycles += PPCTables::GetOpInfo(inst)->numCycles;
       auto func = PPCTables::GetInterpreterOp(inst);
-      DecodedInstruction dec_inst = {func, inst, cycles};
+      DecodedInstruction dec_inst = {func, inst, cycles,
+                                     static_cast<u32>(PPCTables::UsesFPU(inst))};
       inst_cache.push_back(dec_inst);
       disp_cache[key].len += 1;
       NPC = PC + 4;
+      if (dec_inst.uses_fpu && !MSR.FP)
+      {
+        INFO_LOG(DYNA_REC, "%8x: fresh block FP exception exit", PC);
+        PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
+        PowerPC::CheckExceptions();
+        PowerPC::ppcState.downcount -= cycles;
+        PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
+        return;
+      }
       func(inst);
       if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
       {
@@ -240,7 +259,7 @@ void JitTieredGeneric::Run()
     jit_throttle -= PowerPC::ppcState.downcount;*/
     CoreTiming::Advance();
     /*jit_throttle -= PowerPC::ppcState.downcount;*/
-    if (/*jit_throttle < 0*/ inst_cache.size() > (1 << 20))
+    if (/*jit_throttle < 0*/ inst_cache.size() > (1 << 16))
     {
       // this will switch sides on the Baseline report, causing compaction
       baseline_report.Wait();
