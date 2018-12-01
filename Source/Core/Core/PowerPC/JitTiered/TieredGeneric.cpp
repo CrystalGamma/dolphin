@@ -89,6 +89,7 @@ static bool IsRedispatchInstruction(UGeckoInstruction inst)
          || (inst.OPCD == 31 && inst.SUBOP10 == 146)  // mtmsr
          || (info->flags & FL_CHECKEXCEPTIONS)        // rfi
          || (info->type == OpType::InstructionCache)  // isync
+         || (info->type == OpType::Branch)            // isync
       ;
 }
 
@@ -238,15 +239,17 @@ void JitTieredGeneric::Run()
     /*int jit_throttle = JIT_THROTTLE;
     jit_throttle -= PowerPC::ppcState.downcount;*/
     CoreTiming::Advance();
-    /*jit_throttle -= PowerPC::ppcState.downcount;
-    if (jit_throttle < 0) {
+    /*jit_throttle -= PowerPC::ppcState.downcount;*/
+    if (/*jit_throttle < 0*/ inst_cache.size() > (1 << 20))
+    {
       // this will switch sides on the Baseline report, causing compaction
       baseline_report.Wait();
     }
     auto guard = baseline_report.Yield();
-    if (guard.has_value()) {
+    if (guard.has_value())
+    {
       CompactInterpreterBlocks();
-    }*/
+    }
     do
     {
       InterpretBlock();
