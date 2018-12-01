@@ -70,8 +70,8 @@ private:
       };
     };
   };
-  static constexpr DISP_CACHE_SHIFT = 10;
-  static constexpr DISP_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
+  static constexpr int DISP_CACHE_SHIFT = 10;
+  static constexpr size_t DISP_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
   DispCacheEntry disp_cache[DISP_CACHE_SIZE];
   static constexpr u32 DispatchCacheKey(u32 addr) { return XorFold<DISP_CACHE_SHIFT, 2>(addr); }
 
