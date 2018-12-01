@@ -20,11 +20,13 @@ public:
   virtual void InvalidateICache(u32 address, u32 size, bool forced);
 
 private:
+  // for invalidation of JIT blocks
   using Bloom = u64;
   static Bloom BloomNone() { return 0; }
   static Bloom BloomAll() { return ~BloomNone(); }
   static Bloom BloomRange(u32 first, u32 last)
-  {  // we only have (guest) cacheline resolution;
+  {
+    // we only have (guest) cacheline resolution (32=2^5 bytes)
     first >>= 5;
     last >>= 5;
     Bloom res = BloomNone();
@@ -35,6 +37,7 @@ private:
     }
     return res;
   }
+
   template <int bits, int shift_off>
   static constexpr u32 XorFold(u32 address)
   {
@@ -65,7 +68,9 @@ private:
       /// if interpreter block
       struct
       {
+        // number of instructions
         u32 len;
+        // number of times the block was entered
         u32 usecount;
       };
     };
@@ -80,10 +85,13 @@ private:
   {
     InterpreterFunc func;
     UGeckoInstruction inst;
-    /// prefix sum of estimated cycles
+    /// prefix sum of estimated cycles from start of block
     u32 cycles : 31;
+    // whether this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
+    // functions themselves)
     u32 uses_fpu : 1;
   };
+  static_assert sizeof(DecodedInstruction) <= 16;
   std::vector<DecodedInstruction> inst_cache;
   /// offset in inst_cache at which new instructions
   size_t offset_new;

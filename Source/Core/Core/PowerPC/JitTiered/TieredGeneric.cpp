@@ -89,7 +89,6 @@ static bool IsRedispatchInstruction(UGeckoInstruction inst)
          || (inst.OPCD == 31 && inst.SUBOP10 == 146)  // mtmsr
          || (info->flags & FL_CHECKEXCEPTIONS)        // rfi
          || (info->type == OpType::InstructionCache)  // isync
-      //|| (info->type == OpType::Branch) // isync
       ;
 }
 
