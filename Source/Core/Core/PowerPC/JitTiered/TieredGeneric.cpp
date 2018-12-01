@@ -31,7 +31,7 @@ void JitTieredGeneric::InvalidateICache(u32 address, u32 size, bool forced)
     return;
   }
   u32 end = address + size - 1;
-  for (int i = 0; i < DISP_CACHE_SIZE; i += 1)
+  for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
   {
     if ((disp_cache[i].address & 3) == 0)
     {
@@ -39,7 +39,7 @@ void JitTieredGeneric::InvalidateICache(u32 address, u32 size, bool forced)
       // catches 0 case (invalid entry) too, but this invalidates anyway
       if (overlaps(disp_cache[i].address & FLAG_MASK, disp_cache[i].len * 4, address, end))
       {
-        disp_cache[i].address = 0
+        disp_cache[i].address = 0;
       }
     }
   }
@@ -50,7 +50,7 @@ void JitTieredGeneric::CompactInterpreterBlocks()
   auto report = baseline_report.GetWriter();
   report.instructions.clear();
   report.blocks.clear();
-  for (int i = 0; i < DISP_CACHE_SIZE; i += 1)
+  for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
   {
     u32 address = disp_cache[i].address;
     if ((address & 3) == 0 && address)
@@ -59,11 +59,11 @@ void JitTieredGeneric::CompactInterpreterBlocks()
       if (offset >= offset_new)
       {
         u32 start = static_cast<u32>(report.instructions.size());
-        report.blocks.push({address, start});
+        report.blocks.push_back({address, start, disp_cache[i].usecount});
         u32 len = static_cast<u32>(disp_cache[i].len);
         for (u32 n = 0; n < len; n += 1)
         {
-          report.instructions.push(inst_cache[offset + n]);
+          report.instructions.push_back(inst_cache[offset + n]);
         }
         // update offset to position after compaction
         disp_cache[i].offset = start;
@@ -79,16 +79,17 @@ void JitTieredGeneric::CompactInterpreterBlocks()
   inst_cache = report.instructions;
   offset_new = report.instructions.size();
   // sentinel value to make calculating the length in Baseline easier
-  report.blocks({0, offset_new});
+  report.blocks.push_back({0, static_cast<u32>(offset_new), 0});
 }
 
-static constexpr bool IsRedispatchInstruction(UGeckoInstruction inst)
+static bool IsRedispatchInstruction(UGeckoInstruction inst)
 {
   auto info = PPCTables::GetOpInfo(inst);
   return inst.OPCD == 9                               // sc
          || (inst.OPCD == 31 && inst.SUBOP10 == 146)  // mtmsr
          || (info->flags & FL_CHECKEXCEPTIONS)        // rfi
          || (info->type == OpType::InstructionCache)  // isync
+      ;
 }
 
 void JitTieredGeneric::InterpretBlock()
@@ -189,9 +190,11 @@ void JitTieredGeneric::InterpretBlock()
         INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
         break;
       }
-      cycles += PPCTables::GetOpInfo(inst).numCycles;
+      cycles += PPCTables::GetOpInfo(inst)->numCycles;
       auto func = PPCTables::GetInterpreterOp(inst);
-      free_block->push_back({inst, cycles, func});
+      DecodedInstruction dec_inst = {func, inst, cycles};
+      inst_cache.push_back(dec_inst);
+      disp_cache[key].len += 1;
       NPC = PC + 4;
       func(inst);
       if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)

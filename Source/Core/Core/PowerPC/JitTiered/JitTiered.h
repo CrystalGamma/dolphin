@@ -91,6 +91,9 @@ private:
   /// (only checked when downcount reaches 0, which is in turn only checked at the end of blocks)
   static constexpr int JIT_THROTTLE = 10000;
 
+  void CompactInterpreterBlocks();
+  void InterpretBlock();
+
   struct BaselineReport
   {
     struct CompactedBlock
