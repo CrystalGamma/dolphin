@@ -66,7 +66,7 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
     g_jit = g_common_jit = new CachedInterpreter();
     break;
   case PowerPC::CPUCore::TieredGeneric:
-    g_jit = new JitTiered();
+    g_jit = new JitTieredGeneric();
     g_common_jit = nullptr;
     break;
 
