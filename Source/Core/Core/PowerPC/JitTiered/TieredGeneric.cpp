@@ -254,11 +254,8 @@ void JitTieredGeneric::Run()
   const CPU::State* state = CPU::GetStatePtr();
   while (*state == CPU::State::Running)
   {
-    /*int jit_throttle = JIT_THROTTLE;
-    jit_throttle -= PowerPC::ppcState.downcount;*/
     CoreTiming::Advance();
-    /*jit_throttle -= PowerPC::ppcState.downcount;*/
-    if (/*jit_throttle < 0*/ inst_cache.size() > (1 << 16))
+    if (inst_cache.size() >= (1 << 16))
     {
       // this will switch sides on the Baseline report, causing compaction
       baseline_report.Wait();
