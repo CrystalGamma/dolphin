@@ -10,14 +10,16 @@ class JitTieredGeneric : public JitBase
 public:
   virtual const char* GetName() const { return "TieredGeneric"; }
   virtual void Init() {}
-  virtual void ClearCache();
-  virtual void SingleStep();
-  virtual void Run();
+  virtual void ClearCache() final;
+  virtual void SingleStep() final;
+  virtual void Run() final;
   virtual void Shutdown() {}
 
-  virtual void ClearSafe() { ClearCache(); }
+  /// JITs may never reclaim code space while the CPU thread is in JIT code,
+  /// so clearing is always safe
+  virtual void ClearSafe() final { ClearCache(); }
   virtual bool HandleFault(uintptr_t, SContext*) { return false; }
-  virtual void InvalidateICache(u32 address, u32 size, bool forced);
+  virtual void InvalidateICache(u32 address, u32 size, bool forced) final;
 
 private:
   // for invalidation of JIT blocks
@@ -107,20 +109,27 @@ private:
   void CompactInterpreterBlocks();
   void InterpretBlock();
 
+  void BaselineIteration();
+
   /// the least-significant two bits of instruction addresses are always zero, so we can use them
-  /// for flags. this constant can be used to mask out the flags
-  static constexpr u32 FLAG_MASK = ~(u32)3;
+  /// for flags. this constant can be used to mask out the address
+  /// (use ~FLAG_MASK to get the address)
+  static constexpr u32 FLAG_MASK = 3;
+
   static constexpr int DISP_CACHE_SHIFT = 10;
   static constexpr size_t DISP_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
   /// direct-associative cache (hash table) for blocks
-  DispCacheEntry disp_cache[DISP_CACHE_SIZE];
+  DispCacheEntry disp_cache[DISP_CACHE_SIZE]{};
 
   /// contents of interpreter blocks
   std::vector<DecodedInstruction> inst_cache;
   /// offset in inst_cache at which new instructions begin
-  size_t offset_new;
+  size_t offset_new = 0;
 
   /// interface to Baseline JIT thread (not yet implemented, but this is used in interpreter block
   /// compaction)
   HandShake<BaselineReport> baseline_report;
+  /// whether to run the Baseline JIT on the CPU thread
+  /// (override with false in subclasses, except for debugging)
+  bool on_thread_baseline = true;
 };

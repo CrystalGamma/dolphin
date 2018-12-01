@@ -18,26 +18,24 @@ void JitTieredGeneric::ClearCache()
 
 static bool overlaps(u32 block_start, u32 block_len, u32 first_inval, u32 last_inval)
 {
-  return (block_start <= last_inval &&
-          (block_start + block_len) >
-              first_inval)  // (block_start + block_len) is *exclusive* end of the block interval
-         || (block_start >= first_inval && block_start <= last_inval);
+  // (block_start + block_len) is *exclusive* end of the block interval
+  return (block_start <= last_inval && (block_start + block_len) > first_inval) ||
+         (block_start >= first_inval && block_start <= last_inval);
 }
 
 void JitTieredGeneric::InvalidateICache(u32 address, u32 size, bool forced)
 {
   if (size == 0)
   {
-    return;
+    return;  // zero-sized invalidations don't have a 'last invalidated byte' so exit early
   }
   u32 end = address + size - 1;
   for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
   {
-    if ((disp_cache[i].address & 3) == 0)
+    if ((disp_cache[i].address & FLAG_MASK) <= 1)
     {
-      // interpreter block ⇒ 'range' is length of the block
-      // catches 0 case (invalid entry) too, but this invalidates anyway
-      if (overlaps(disp_cache[i].address & FLAG_MASK, disp_cache[i].len * 4, address, end))
+      // catches 0 case (invalid entry) too, but this invalidates anyway (⇒ safe)
+      if (overlaps(disp_cache[i].address & ~FLAG_MASK, disp_cache[i].len * 4, address, end))
       {
         disp_cache[i].address = 0;
       }
@@ -53,7 +51,7 @@ void JitTieredGeneric::CompactInterpreterBlocks()
   for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
   {
     u32 address = disp_cache[i].address;
-    if ((address & 3) == 0 && address)
+    if ((address & FLAG_MASK) == 0 && address)
     {
       u32 offset = disp_cache[i].offset;
       if (offset >= offset_new)
@@ -118,10 +116,10 @@ void JitTieredGeneric::InterpretBlock()
   }
   u32 start_addr = PC;
   u32 key = DispatchCacheKey(start_addr);
-  if ((disp_cache[key].address & FLAG_MASK) != start_addr)
+  if ((disp_cache[key].address & ~FLAG_MASK) != start_addr)
   {
-    // not in cache: create new Interpreter block (or look up in JIT block DB once that's
-    // implemented)
+    // not in cache: create new Interpreter block
+    // (or look up in JIT block DB once that's implemented)
     disp_cache[key].address = start_addr;
     disp_cache[key].offset = (u32)inst_cache.size();
     disp_cache[key].len = disp_cache[key].usecount = 0;
@@ -170,14 +168,15 @@ void JitTieredGeneric::InterpretBlock()
       auto& last = inst_cache[offset + len - 1];
       cycles = last.cycles;
       if (IsRedispatchInstruction(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
-      {  // even if the block didn't end here, we have to go back to dispatcher, because of e. g.
-         // invalidation or breakpoints
+      {
+        // even if the block didn't end here, we have to go back to dispatcher
+        // because of e. g. invalidation or breakpoints
         INFO_LOG(DYNA_REC, "%8x: hit context sync or breakpoint", PC);
         PowerPC::ppcState.downcount -= cycles;
         return;
       }
     }
-    // overrun
+    // overrun: add more instructions to block
     if (offset + len != inst_cache.size())
     {
       // we can only append to the last block, so copy this one to the end
@@ -209,21 +208,18 @@ void JitTieredGeneric::InterpretBlock()
       }
       cycles += PPCTables::GetOpInfo(inst)->numCycles;
       auto func = PPCTables::GetInterpreterOp(inst);
-      DecodedInstruction dec_inst = {func, inst, cycles,
-                                     static_cast<u32>(PPCTables::UsesFPU(inst))};
-      inst_cache.push_back(dec_inst);
+      bool uses_fpu = PPCTables::UsesFPU(inst);
+      inst_cache.push_back({func, inst, cycles, static_cast<u32>(uses_fpu)});
       disp_cache[key].len += 1;
       NPC = PC + 4;
-      if (dec_inst.uses_fpu && !MSR.FP)
+      if (uses_fpu && !MSR.FP)
       {
-        INFO_LOG(DYNA_REC, "%8x: fresh block FP exception exit", PC);
         PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
-        PowerPC::CheckExceptions();
-        PowerPC::ppcState.downcount -= cycles;
-        PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
-        return;
       }
-      func(inst);
+      else
+      {
+        func(inst);
+      }
       if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
       {
         INFO_LOG(DYNA_REC, "%8x: fresh block exception exit", PC);
@@ -255,10 +251,12 @@ void JitTieredGeneric::Run()
   while (*state == CPU::State::Running)
   {
     CoreTiming::Advance();
-    if (inst_cache.size() >= (1 << 16))
+    // this heuristic works well for the interpreter-only case,
+    // but probably doesn't for a real on-thread JIT situation
+    // (in the off-thread JIT case this is not necessary at all)
+    if (on_thread_baseline && inst_cache.size() >= (1 << 16))
     {
-      // this will switch sides on the Baseline report, causing compaction
-      baseline_report.Wait();
+      BaselineIteration();
     }
     auto guard = baseline_report.Yield();
     if (guard.has_value())
@@ -270,4 +268,14 @@ void JitTieredGeneric::Run()
       InterpretBlock();
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
+}
+
+void JitTieredGeneric::BaselineIteration()
+{
+  {
+    // this will switch sides on the Baseline report, causing compaction
+    auto guard = baseline_report.Wait();
+    // in subclasses: invalidate JIT blocks here and do the most urgent of compilation
+  }
+  // in subclasses: do less urgent work here
 }
