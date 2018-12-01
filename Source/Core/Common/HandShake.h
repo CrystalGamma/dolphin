@@ -6,23 +6,6 @@
 template <typename Inner>
 struct HandShake
 {
-private:
-  // depends on microarchitecture; usual values are 32, 64 or 128; this is used to avoid false
-  // sharing, so use the highest value in use on the given architecture
-  constexpr int CACHELINE_SIZE = 128;
-
-  /// if we could detect whether a mutex is being waited on (theoretically possible in most mutex
-  /// implementations) we wouldn't need this
-  std::atomic<int> select = 0;
-  struct
-  {
-    // separate into different cache lines to avoid false sharing
-    alignas(CACHELINE_SIZE) std::mutex mutex;
-    Inner inner;
-  } sides[2];
-  alignas(CACHELINE_SIZE) int side;
-  std::unique_lock<std::mutex> writerGuard;
-
 public:
   class ReaderGuard
   {
@@ -76,4 +59,21 @@ public:
     writerGuard.swap(res->guard);
     return res;
   }
+
+private:
+  // depends on microarchitecture; usual values are 32, 64 or 128; this is used to avoid false
+  // sharing, so use the highest value in use on the given architecture
+  static constexpr int CACHELINE_SIZE = 128;
+
+  /// if we could detect whether a mutex is being waited on (theoretically possible in most mutex
+  /// implementations) we wouldn't need this
+  std::atomic<int> select = 0;
+  struct
+  {
+    // separate into different cache lines to avoid false sharing
+    alignas(CACHELINE_SIZE) std::mutex mutex;
+    Inner inner;
+  } sides[2];
+  alignas(CACHELINE_SIZE) int side;
+  std::unique_lock<std::mutex> writerGuard;
 };
