@@ -64,6 +64,10 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
   case PowerPC::CPUCore::CachedInterpreter:
     g_jit = g_common_jit = new CachedInterpreter();
     break;
+  case PowerPC::CPUCore::TieredGeneric:
+    g_jit = new JitTiered();
+    g_common_jit = nullptr;
+    break;
 
   default:
     PanicAlertT("The selected CPU emulation core (%d) is not available. "
