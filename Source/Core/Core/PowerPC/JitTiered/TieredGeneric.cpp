@@ -235,20 +235,18 @@ void JitTieredGeneric::Run()
   const CPU::State* state = CPU::GetStatePtr();
   while (*state == CPU::State::Running)
   {
-    int jit_throttle = JIT_THROTTLE;
-    jit_throttle -= PowerPC::ppcState.downcount;
+    /*int jit_throttle = JIT_THROTTLE;
+    jit_throttle -= PowerPC::ppcState.downcount;*/
     CoreTiming::Advance();
-    jit_throttle -= PowerPC::ppcState.downcount;
-    if (jit_throttle < 0)
-    {
+    /*jit_throttle -= PowerPC::ppcState.downcount;
+    if (jit_throttle < 0) {
       // this will switch sides on the Baseline report, causing compaction
       baseline_report.Wait();
     }
     auto guard = baseline_report.Yield();
-    if (guard.has_value())
-    {
+    if (guard.has_value()) {
       CompactInterpreterBlocks();
-    }
+    }*/
     do
     {
       InterpretBlock();
