@@ -118,6 +118,14 @@ void JitTieredGeneric::InterpretBlock()
   }
   u32 start_addr = PC;
   u32 key = DispatchCacheKey(start_addr);
+  if ((disp_cache[key].address & FLAG_MASK) != start_addr)
+  {
+    // not in cache: create new Interpreter block (or look up in JIT block DB once that's
+    // implemented)
+    disp_cache[key].address = start_addr;
+    disp_cache[key].offset = (u32)inst_cache.size();
+    disp_cache[key].len = disp_cache[key].usecount = 0;
+  }
   if (disp_cache[key].address == start_addr)
   {
     // flag bits are zero: interpreter block
