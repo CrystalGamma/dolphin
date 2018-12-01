@@ -10,7 +10,7 @@
 static constexpr u32 EXCEPTION_SYNC =
     ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
 
-void JitTiered::ClearCache()
+void JitTieredGeneric::ClearCache()
 {
   // invalidate dispatch cache
   std::memset(&disp_cache, 0, sizeof(disp_cache));
@@ -24,7 +24,7 @@ static bool overlaps(u32 block_start, u32 block_len, u32 first_inval, u32 last_i
          || (block_start >= first_inval && block_start <= last_inval);
 }
 
-void JitTiered::InvalidateICache(u32 address, u32 size, bool forced)
+void JitTieredGeneric::InvalidateICache(u32 address, u32 size, bool forced)
 {
   if (size == 0)
   {
@@ -45,7 +45,7 @@ void JitTiered::InvalidateICache(u32 address, u32 size, bool forced)
   }
 }
 
-void JitTiered::CompactInterpreterBlocks()
+void JitTieredGeneric::CompactInterpreterBlocks()
 {
   auto report = baseline_report.GetWriter();
   report.instructions.clear();
@@ -91,7 +91,7 @@ static constexpr bool IsRedispatchInstruction(UGeckoInstruction inst)
          || (info->type == OpType::InstructionCache)  // isync
 }
 
-void JitTiered::InterpretBlock()
+void JitTieredGeneric::InterpretBlock()
 {
   if (PC == 0)
   {
@@ -213,13 +213,13 @@ void JitTiered::InterpretBlock()
   }
 }
 
-void JitTiered::SingleStep()
+void JitTieredGeneric::SingleStep()
 {
   CoreTiming::Advance();
   InterpretBlock();
 }
 
-void JitTiered::Run()
+void JitTieredGeneric::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
   while (*state == CPU::State::Running)
