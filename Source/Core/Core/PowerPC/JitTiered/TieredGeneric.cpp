@@ -82,7 +82,7 @@ void JitTiered::CompactInterpreterBlocks()
   report.blocks({0, offset_new});
 }
 
-static constexpr IsRedispatchInstruction(UGeckoInstruction inst)
+static constexpr bool IsRedispatchInstruction(UGeckoInstruction inst)
 {
   auto info = PPCTables::GetOpInfo(inst);
   return inst.OPCD == 9                               // sc
