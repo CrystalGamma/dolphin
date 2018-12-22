@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 
+#include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
 #include "Common/FloatUtils.h"
 #include "Core/PowerPC/Interpreter/Interpreter.h"
@@ -34,33 +35,35 @@ static void SetFI(UReg_FPSCR* fpscr, int FI)
 // Note that the convert to integer operation is defined
 // in Appendix C.4.2 in PowerPC Microprocessor Family:
 // The Programming Environments Manual for 32 and 64-bit Microprocessors
-void ConvertToInteger(UGeckoInstruction inst, RoundingMode rounding_mode)
+void ConvertToInteger(PowerPC::PowerPCState* ppcs, UGeckoInstruction inst,
+                      RoundingMode rounding_mode)
 {
   const double b = rPS(inst.FB).PS0AsDouble();
+  const double b = ppcs->ps[inst.FB].PS0AsDouble();
   u32 value;
   bool exception_occurred = false;
 
   if (std::isnan(b))
   {
     if (Common::IsSNAN(b))
-      SetFPException(&FPSCR, FPSCR_VXSNAN);
+      SetFPException(&ppcs->fpscr, FPSCR_VXSNAN);
 
     value = 0x80000000;
-    SetFPException(&FPSCR, FPSCR_VXCVI);
+    SetFPException(&ppcs->fpscr, FPSCR_VXCVI);
     exception_occurred = true;
   }
   else if (b > static_cast<double>(0x7fffffff))
   {
     // Positive large operand or +inf
     value = 0x7fffffff;
-    SetFPException(&FPSCR, FPSCR_VXCVI);
+    SetFPException(&ppcs->fpscr, FPSCR_VXCVI);
     exception_occurred = true;
   }
   else if (b < -static_cast<double>(0x80000000))
   {
     // Negative large operand or -inf
     value = 0x80000000;
-    SetFPException(&FPSCR, FPSCR_VXCVI);
+    SetFPException(&ppcs->fpscr, FPSCR_VXCVI);
     exception_occurred = true;
   }
   else
@@ -101,22 +104,22 @@ void ConvertToInteger(UGeckoInstruction inst, RoundingMode rounding_mode)
     const double di = i;
     if (di == b)
     {
-      FPSCR.ClearFIFR();
+      ppcs->fpscr.ClearFIFR();
     }
     else
     {
       // Also sets FPSCR[XX]
-      SetFI(&FPSCR, 1);
-      FPSCR.FR = fabs(di) > fabs(b);
+      SetFI(&ppcs->fpscr, 1);
+      ppcs->fpscr.FR = fabs(di) > fabs(b);
     }
   }
 
   if (exception_occurred)
   {
-    FPSCR.ClearFIFR();
+    ppcs->fpscr.ClearFIFR();
   }
 
-  if (!exception_occurred || FPSCR.VE == 0)
+  if (!exception_occurred || ppcs->fpscr.VE == 0)
   {
     // Based on HW tests
     // FPRF is not affected
@@ -124,7 +127,7 @@ void ConvertToInteger(UGeckoInstruction inst, RoundingMode rounding_mode)
     if (value == 0 && std::signbit(b))
       result |= 0x100000000ull;
 
-    rPS(inst.FD).SetPS0(result);
+    ppcs->ps[inst.FD].SetPS0(result);
   }
 
   if (inst.Rc)
@@ -225,12 +228,12 @@ void Interpreter::fcmpu(UGeckoInstruction inst)
 
 void Interpreter::fctiwx(UGeckoInstruction inst)
 {
-  ConvertToInteger(inst, static_cast<RoundingMode>(FPSCR.RN));
+  ConvertToInteger(&PowerPC::ppcState, inst, static_cast<RoundingMode>(FPSCR.RN));
 }
 
 void Interpreter::fctiwzx(UGeckoInstruction inst)
 {
-  ConvertToInteger(inst, RoundingMode::TowardsZero);
+  ConvertToInteger(&PowerPC::ppcState, inst, RoundingMode::TowardsZero);
 }
 
 void Interpreter::fmrx(UGeckoInstruction inst)
