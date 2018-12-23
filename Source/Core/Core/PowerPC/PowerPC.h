@@ -161,6 +161,7 @@ struct PowerPCState
   {
     cr.SetField(1, (fpscr.FX << 3) | (fpscr.FEX << 2) | (fpscr.VX << 1) | fpscr.OX);
   }
+  void UpdateFPRF(double dvalue);
 
   void SetSR(u32 index, u32 value);
 };
@@ -289,7 +290,5 @@ inline void SetXER_OV(bool value)
   PowerPC::ppcState.xer_so_ov = (PowerPC::ppcState.xer_so_ov & 0xFE) | static_cast<u32>(value);
   SetXER_SO(value);
 }
-
-void UpdateFPRF(double dvalue);
 
 }  // namespace PowerPC

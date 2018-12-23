@@ -608,9 +608,9 @@ void PowerPCState::SetSR(u32 index, u32 value)
 
 // FPSCR update functions
 
-void UpdateFPRF(double dvalue)
+void PowerPCState::UpdateFPRF(double dvalue)
 {
-  FPSCR.FPRF = Common::ClassifyDouble(dvalue);
+  fpscr.FPRF = Common::ClassifyDouble(dvalue);
 }
 
 }  // namespace PowerPC
