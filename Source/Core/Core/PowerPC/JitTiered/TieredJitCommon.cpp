@@ -1,0 +1,449 @@
+// Copyright 2008 Dolphin Emulator Project
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
+
+#include "Core/PowerPC/JitTiered/JitTiered.h"
+
+#include <thread>
+#include <utility>
+
+#include "Common/Logging/Log.h"
+#include "Core/CoreTiming.h"
+#include "Core/HW/CPU.h"
+#include "Core/PowerPC/PowerPC.h"
+
+void JitTieredCommon::CPUDoReport(bool wait, bool hint)
+{
+  cpu_thread_lock.unlock();
+  std::unique_lock lock = std::unique_lock(report_mutex, std::try_to_lock);
+  if (wait)
+  {
+    if (!lock.owns_lock())
+    {
+      lock.lock();
+    }
+    if (report_sent)
+    {
+      report_cv.wait(lock, [&] { return !report_sent; });
+    }
+    // at this point, 'lock' owns a lock on report_mutex and report_sent == false
+  }
+  if (lock.owns_lock())
+  {
+    if (!report_sent)
+    {
+      // compaction needs access to dispatch cache
+      cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+      CompactInterpreterBlocks(&baseline_report, false);
+      baseline_report.invalidation_bloom = next_report.invalidation_bloom;
+      baseline_report.invalidations.swap(next_report.invalidations);
+      old_bloom = next_report.invalidation_bloom;
+      next_report.invalidation_bloom = BloomNone();
+      report_sent = true;
+      lock.unlock();
+      // if the Baseline JIT thread is waiting for us, wake it up
+      report_cv.notify_one();
+    }
+    else
+    {
+      lock.unlock();
+    }
+  }
+  if (on_thread_baseline && (wait || hint))
+  {
+    if (cpu_thread_lock.owns_lock())
+    {
+      cpu_thread_lock.unlock();
+    }
+    BaselineIteration();
+  }
+  if (!cpu_thread_lock.owns_lock())
+  {
+    cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+  }
+}
+
+void JitTieredCommon::Run()
+{
+  const CPU::State* state = CPU::GetStatePtr();
+  std::thread compiler_thread;
+  if (!on_thread_baseline)
+  {
+    compiler_thread = std::thread([this] {
+      while (BaselineIteration())
+      {
+      }
+    });
+  }
+  cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+  // File::IOFile f("dumpjit", "a");
+  while (*state == CPU::State::Running)
+  {
+    // advancing the time might block (e. g. on the GPU)
+    // or keep us busy for a while (copying data around),
+    // so try to report before doing so
+    CPUDoReport(false, next_report.instructions.size() >= (1 << 16));
+
+    CoreTiming::Advance();
+
+    // block overrun is a little annoying in the JIT. to be deterministic,
+    // we have to act as if the block never ended (not advance the time, not return from Run())
+    bool overrun = false;
+    do
+    {
+      // DumpState(f);
+      RunZeroInstruction();
+      const u32 start_addr = PC;
+      const u32 key = FindBlock(start_addr);
+      DispCacheEntry& cache_entry = disp_cache.at(key);
+      const u32 flags = cache_entry.address & FLAG_MASK;
+      if (flags <= 1)
+      {
+        // interpreter and Baseline blocks use a run-loop-driven execution counter
+        u32 usecount = cache_entry.usecount + 1;
+        cache_entry.usecount = usecount;
+        if (flags == 0)
+        {
+          // INFO_LOG(DYNA_REC, "entering Interpreter @ %08x", start_addr);
+          overrun = InterpretBlock(key);
+          if (overrun)
+          {
+            if (cache_entry.offset < offset_new)
+            {
+              // we have already reported this block: invalidate the Baseline block
+              INFO_LOG(DYNA_REC, "extending reported interpreter block @ %08x", start_addr);
+              next_report.invalidations.push_back({start_addr, start_addr});
+              next_report.invalidation_bloom |= BloomRange(start_addr, start_addr);
+            }
+            ReadInstructions(key);
+            overrun = false;
+          }
+          if (usecount >= REPORT_THRESHOLD)
+          {
+            // INFO_LOG(DYNA_REC, "block %08x reached threshold", start_addr);
+            CPUDoReport(false, true);
+          }
+        }
+        else
+        {
+          // INFO_LOG(DYNA_REC, "entering Baseline @ %08x (offset %x)", start_addr,
+          // cache_entry.offset);
+          u32 res = enter_baseline_block(this, cache_entry.offset, &PowerPC::ppcState, nullptr);
+          if (res & REPORT_IMMEDIATELY)
+          {
+            CPUDoReport(true, true);
+          }
+          overrun = res & BLOCK_OVERRUN;
+          if (overrun)
+          {
+            overrun = OverrunBaseline(start_addr, key);
+          }
+        }
+      }
+      else
+      {
+        ERROR_LOG(DYNA_REC, "entering Optimized @ %08x", start_addr);
+        u32 res = enter_optimized_block(this, cache_entry.offset, &PowerPC::ppcState);
+        if (res & REPORT_IMMEDIATELY)
+        {
+          CPUDoReport(true, true);
+        }
+        overrun = res & BLOCK_OVERRUN;
+      }
+      if (overrun)
+      {
+        INFO_LOG(DYNA_REC, "overrun @ %08x", start_addr);
+      }
+    } while (overrun || (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running));
+  }
+  cpu_thread_lock.unlock();
+
+  if (compiler_thread.joinable())
+  {
+    NOTICE_LOG(DYNA_REC, "Shutting down JIT compiler");
+
+    // shut down compiler thread
+    cpu_thread_lock = std::unique_lock(report_mutex);
+    quit = true;
+    report_cv.notify_one();
+    report_cv.wait(cpu_thread_lock, [&] { return quit == false; });
+    cpu_thread_lock.unlock();
+    compiler_thread.join();
+  }
+}
+
+bool JitTieredCommon::OverrunBaseline(u32 start_addr, u32 key)
+{
+  INFO_LOG(DYNA_REC, "baseline block overrun @ %08x", start_addr);
+  cpu_thread_lock.unlock();
+  cpu_thread_lock = std::unique_lock(block_db_mutex);
+
+  u32 offset = next_report.instructions.size();
+  u32 len = 0;
+  // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
+  // bloom filters
+  auto find_result = jit_block_db.find(start_addr);
+  if (find_result != jit_block_db.end())
+  {
+    const std::vector<DecodedInstruction>& instructions = find_result->second.instructions;
+    if (!instructions.empty())
+    {
+      for (const DecodedInstruction& inst : instructions)
+      {
+        next_report.instructions.push_back(inst);
+        len += 1;
+      }
+    }
+  }
+
+  std::unique_lock disp_lock(disp_cache_mutex);
+
+  bool resolved = false;
+
+  // Baseline may have invalidated that entry while we were looking up the block,
+  // but we are replacing it with an interpreter block anyway
+  DispCacheEntry& cache_entry = disp_cache.at(key);
+  if (len)
+  {
+    cache_entry.address = start_addr;
+    cache_entry.offset = offset;
+    cache_entry.len = len;
+    // leave usecount untouched
+    cpu_thread_lock = std::move(disp_lock);
+    ReadInstructions(key);
+    resolved = true;
+  }
+  else
+  {
+    cache_entry.address = 0;
+    cpu_thread_lock = std::move(disp_lock);
+  }
+  return !resolved;
+}
+
+u32 JitTieredCommon::LookupBlock(u32 key, u32 address)
+{
+  // unlocks the dispatch cache mutex, allowing JIT threads trying to reclaim code space to delete
+  // entries our free slot in primary cache will still be free when we come back, because JIT
+  // threads are only allowed to delete entries, not create them.
+  // never lock block DB while holding dispatch cache mutex
+  cpu_thread_lock.unlock();
+  cpu_thread_lock = std::unique_lock(block_db_mutex);
+
+  auto find_result = jit_block_db.find(address);
+  Bloom bloom = next_report.invalidation_bloom | old_bloom;
+  if (find_result == jit_block_db.end() || (find_result->second.bloom & bloom))
+  {
+    cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+
+    return JitTieredGeneric::LookupBlock(key, address);
+  }
+  else
+  {
+    JitBlock& block = find_result->second;
+    DispCacheEntry entry;
+    entry.address = address;
+    entry.offset = block.offset;
+    if (block.instructions.empty())
+    {
+      // block is optimized
+      entry.address |= 2;
+      entry.bloom = block.bloom;
+    }
+    else
+    {
+      // block is Baseline-compiled
+      INFO_LOG(DYNA_REC, "found Baseline block @ %08x (offset %x)", address, entry.offset);
+      entry.address |= 1;
+      entry.len = block.instructions.size();
+      entry.usecount = 0;
+    }
+
+    // if we unlock the block DB before locking, we might be interrupted by the JIT thread
+    // invalidating them for reclamation, keeping wild offsets around
+    std::unique_lock disp_lock(disp_cache_mutex);
+
+    disp_cache.at(key) = entry;
+    cpu_thread_lock = std::move(disp_lock);
+    return key;
+  }
+}
+
+void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
+                                    std::map<u32, ReportedBlock>* reported_blocks)
+{
+  std::sort(invalidations->begin(), invalidations->end(),
+            [](const Invalidation& a, const Invalidation& b) {
+              return std::tie(a.first, a.last) < std::tie(b.first, b.last);
+            });
+  std::unique_lock guard(block_db_mutex);
+  size_t num_inv = invalidations->size();
+  size_t inv_start = 0;
+  // this loop should run in O(num_inv + #blocks * log(#reported_blocks) * (size of biggest
+  // intersecting cluster of invalidations)^2) time if this turns out to be too slow, we may need to
+  // find a container more suitable to finding intersecting ranges
+  auto iter = jit_block_db.begin();
+  while (iter != jit_block_db.end())
+  {
+    const u32 addr = iter->first;
+    JitBlock& block = iter->second;
+    const u32 jit_len = block.instructions.size();
+    const bool bloom_hit = block.bloom & baseline_report.invalidation_bloom;
+    while (inv_start < num_inv && invalidations->at(inv_start).last < addr)
+    {
+      // this and all previous blocks only affect lower addresses
+      inv_start += 1;
+    }
+    auto reported_block = reported_blocks->find(addr);
+    u32 reported_len = 0;
+    if (reported_block != reported_blocks->end())
+    {
+      reported_len = reported_block->second.len;
+      if (reported_len == 0)
+      {
+        // blocks with zero length are considered optimized blocks, so make sure we don't try to
+        // compile a zero-length block
+        reported_block->second.usecount += block.runcount;
+        reported_blocks->erase(reported_block);
+      }
+    }
+    bool invalidated = false;
+    if (jit_len != 0)
+    {
+      if (reported_len > jit_len)
+      {
+        // Baseline block overrun
+        invalidated = true;
+      }
+      else if (bloom_hit)
+      {
+        for (size_t i = inv_start; i < num_inv; i += 1)
+        {
+          const Invalidation& inv = invalidations->at(i);
+          if (inv.first >= addr + jit_len * 4)
+          {
+            // this and all following invalidations affect only higher addresses
+            break;
+          }
+          if (inv.last >= addr)
+          {
+            invalidated = true;
+            break;
+          }
+        }
+      }
+    }
+    else if (bloom_hit)
+    {
+      // figure out how to check optimized blocks for invalidation when implementing
+      // optimized JIT
+      invalidated = true;
+      break;
+    }
+    if (invalidated)
+    {
+      if (reported_len != 0)
+      {
+        INFO_LOG(DYNA_REC, "recompile Baseline block @ %08x", addr);
+        reported_block->second.usecount += block.runcount;
+      }
+      else
+      {
+        INFO_LOG(DYNA_REC, "invalidate JIT block @ %08x (used %u times)", addr, block.runcount);
+        block_counters.emplace(addr, block.runcount);
+      }
+      iter = jit_block_db.erase(iter);
+    }
+    else
+    {
+      block.runcount += reported_block->second.usecount;
+      ++iter;
+    }
+  }
+  invalidations->clear();
+}
+
+bool JitTieredCommon::BaselineIteration()
+{
+  std::unique_lock lock(report_mutex);
+  report_cv.wait(lock, [&] { return report_sent || quit; });
+
+  report_sent = false;
+  if (quit)
+  {
+    quit = false;
+    lock.unlock();
+    report_cv.notify_one();
+    return false;
+  }
+
+  INFO_LOG(DYNA_REC, "reading report");
+
+  std::map<u32, ReportedBlock> reported_blocks;
+  // don't count the sentinel
+  size_t num_new_blocks = baseline_report.blocks.size() - 1;
+  u32 end = baseline_report.blocks[0].start;
+  for (size_t i = 0; i < num_new_blocks; i += 1)
+  {
+    const CompactedBlock& block = baseline_report.blocks[i];
+    u32 start = end;
+    end = baseline_report.blocks[i + 1].start;
+    const ReportedBlock rb = {start, end - start, block.usecount};
+    reported_blocks.emplace(block.address, rb);
+  }
+  baseline_report.blocks.clear();
+
+  UpdateBlockDB(baseline_report.invalidation_bloom, &baseline_report.invalidations,
+                &reported_blocks);
+  baseline_report.invalidation_bloom = BloomNone();
+
+  for (auto pair : reported_blocks)
+  {
+    const u32 address = pair.first;
+    const ReportedBlock& block = pair.second;
+    u32 runcount = block.usecount;
+    auto counter = block_counters.find(address);
+    if (counter != block_counters.end())
+    {
+      runcount += counter->second;
+      if (runcount < BASELINE_THRESHOLD)
+      {
+        counter->second = runcount;
+        continue;
+      }
+      block_counters.erase(counter);
+    }
+    else
+    {
+      if (runcount < BASELINE_THRESHOLD)
+      {
+        block_counters.insert(std::make_pair(address, runcount));
+        continue;
+      }
+    }
+    if (block.len == 0)
+    {
+      // entries with length 0 in the block are considered 'optimized' blocks
+      // and trying to compile an empty block doesn't make sense anyway
+      continue;
+    }
+    std::vector<DecodedInstruction> insts;
+    for (u32 i = 0; i < block.len; i += 1)
+    {
+      insts.push_back(baseline_report.instructions[block.start + i]);
+    }
+    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1), current_offset, runcount,
+                   std::move(insts)};
+    BaselineCompile(address, std::move(jb));
+  }
+
+  // the mutex on the report drops here, so next time the CPU thread reports,
+  // it will drop the interpreter blocks whose instructions we just received,
+  // to be replaced by our JIT code once that address is jumped to next.
+  lock.unlock();
+  // in the (hopefully unlikely) case that the CPU thread is waiting on us, notify it
+  report_cv.notify_one();
+
+  // TODO: analyse instrumentation data, build CFGs/dominator trees, optimize
+  return true;
+}

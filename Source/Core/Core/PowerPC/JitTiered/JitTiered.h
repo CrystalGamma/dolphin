@@ -5,9 +5,13 @@
 #pragma once
 
 #include <bitset>
+#include <condition_variable>
+#include <map>
+#include <mutex>
 #include <vector>
 
 #include "Core/PowerPC/JitCommon/JitBase.h"
+#include "Core/PowerPC/PowerPC.h"
 
 /// generic path of the Tiered JIT framework.
 /// implements an interpreter with block caching and compaction of said cache.
@@ -135,6 +139,9 @@ protected:
   /// the default implementation just creates a new interpreter block.
   virtual u32 LookupBlock(u32 key, u32 address);
 
+  static constexpr u32 EXCEPTION_SYNC =
+      ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
+
   /// the least-significant two bits of instruction addresses are always zero, so we can use them
   /// for flags. this constant can be used to mask out the address
   /// (use ~FLAG_MASK to get the address)
@@ -162,4 +169,85 @@ protected:
 
   /// offset in next_report.instructions at which new instructions begin
   size_t offset_new = 0;
+};
+
+// deadlock prevention: (A < B means never block on A while holding B)
+// report_mutex < block_db_mutex < disp_cache_mutex
+class JitTieredCommon : public JitTieredGeneric
+{
+public:
+  virtual void Run() final;
+
+protected:
+  struct JitBlock
+  {
+    Bloom bloom;
+    u32 offset;
+    u32 runcount;
+    std::vector<DecodedInstruction> instructions;
+  };
+  struct ReportedBlock
+  {
+    u32 start;
+    u32 len;
+    u32 usecount;
+  };
+
+  void CPUDoReport(bool wait, bool hint);
+  bool OverrunBaseline(u32 start_addr, u32 key);
+  virtual u32 LookupBlock(u32 key, u32 address) final;
+
+  /// on JIT thread: invalidates entries in the Block DB and the dispatch cache with the given types
+  /// and in the specified range (note: this range is of entry points. it is assumed that no entry
+  /// points invalidated by the reclamation are beyond the 'last' parameter)
+  void ReclaimCodeSpace(bool baseline, bool optimized, u32 first, u32 last);
+  bool BaselineIteration();
+  void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
+                     std::map<u32, ReportedBlock>* reported_blocks);
+  virtual void BaselineCompile(u32 address, JitBlock&& block) = 0;
+
+  static constexpr u32 BASELINE_THRESHOLD = 16;
+  static constexpr u32 REPORT_THRESHOLD = 128;
+  // flags in the return value of the entry functions
+  static constexpr u32 REPORT_IMMEDIATELY = 1;
+  static constexpr u32 BLOCK_OVERRUN = 2;
+  /// FIXME
+  static constexpr size_t CACHELINE = 128;
+
+  // === CPU thread data ===
+  /// bloom filter for invalidations that have been reported to Baseline in the last report
+  /// (after the next report we can be sure Baseline has processed the invalidations
+  /// and don't need to consider this filter anymore)
+  Bloom old_bloom = BloomNone();
+
+  /// whether to run the Baseline JIT on the CPU thread
+  /// (override with false in subclasses, except for debugging)
+  bool on_thread_baseline = true;
+
+  u32 (*enter_baseline_block)(JitTieredCommon* self, u32 offset, PowerPC::PowerPCState* ppcState,
+                              void* instrumentation_buffer) = nullptr;
+  u32 (*enter_optimized_block)(JitTieredCommon* self, u32 offset,
+                               PowerPC::PowerPCState* ppcState) = nullptr;
+
+  // === dispatch cache locking ===
+  /// holds a lock on disp_cache_mutex most of the time
+  std::unique_lock<std::mutex> cpu_thread_lock;
+  /// only unlocked by CPU thread when looking up JIT blocks.
+  /// only locked by other threads on code space reclamation.
+  std::mutex disp_cache_mutex;
+
+  // === Block DB ===
+  alignas(CACHELINE) std::mutex block_db_mutex;
+  std::map<u32, JitBlock> jit_block_db;
+
+  // === Baseline report ===
+  alignas(CACHELINE) std::mutex report_mutex;
+  std::condition_variable report_cv;
+  bool report_sent = false;
+  bool quit = false;
+  BaselineReport baseline_report;
+
+  // === Baseline thread data ===
+  alignas(CACHELINE) std::map<u32, u32> block_counters;
+  u32 current_offset = 0;
 };
