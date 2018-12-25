@@ -10,18 +10,11 @@
 #include <string>
 #include <unordered_set>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include "Common/PerformanceCounter.h"
-#endif
-
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/File.h"
 #include "Common/MsgHandler.h"
 
-#include "Core/Core.h"
 #include "Core/PowerPC/CPUCoreBase.h"
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
@@ -42,7 +35,6 @@
 namespace JitInterface
 {
 static JitBase* g_jit = nullptr;
-JitCommonBase* g_common_jit = nullptr;
 void SetJit(JitBase* jit)
 {
   g_jit = jit;
@@ -58,27 +50,26 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
   {
 #if _M_X86
   case PowerPC::CPUCore::JIT64:
-    g_jit = g_common_jit = new Jit64();
+    g_jit = new Jit64();
     break;
 #endif
 #if _M_ARM_64
   case PowerPC::CPUCore::JITARM64:
-    g_jit = g_common_jit = new JitArm64();
+    g_jit = new JitArm64();
     break;
 #endif
   case PowerPC::CPUCore::CachedInterpreter:
-    g_jit = g_common_jit = new CachedInterpreter();
+    g_jit = new CachedInterpreter();
     break;
   case PowerPC::CPUCore::TieredGeneric:
     g_jit = new JitTieredGeneric();
-    g_common_jit = nullptr;
     break;
 
   default:
     PanicAlertT("The selected CPU emulation core (%d) is not available. "
                 "Please select a different CPU emulation core in the settings.",
                 static_cast<int>(core));
-    g_jit = g_common_jit = nullptr;
+    g_jit = nullptr;
     return nullptr;
   }
   g_jit->Init();
@@ -90,44 +81,20 @@ CPUCoreBase* GetCore()
   return g_jit;
 }
 
-void SetProfilingState(ProfilingState state)
+void EnableProfiling(bool enabled)
 {
-  if (!g_common_jit)
-    return;
-
-  g_common_jit->jo.profile_blocks = state == ProfilingState::Enabled;
+  if (g_jit)
+  {
+    g_jit->EnableProfiling(enabled);
+  }
 }
 
 static void GetProfileResults(Profiler::ProfileStats* prof_stats)
 {
-  // Can't really do this with no JitCommonBase core available
-  if (!g_common_jit)
-    return;
-
-  prof_stats->cost_sum = 0;
-  prof_stats->timecost_sum = 0;
-  prof_stats->block_stats.clear();
-
-  Core::State old_state = Core::GetState();
-  if (old_state == Core::State::Running)
-    Core::SetState(Core::State::Paused);
-
-  QueryPerformanceFrequency((LARGE_INTEGER*)&prof_stats->countsPerSec);
-  g_common_jit->GetBlockCache()->RunOnBlocks([&prof_stats](const JitBlock& block) {
-    const auto& data = block.profile_data;
-    u64 cost = data.downcountCounter;
-    u64 timecost = data.ticCounter;
-    // Todo: tweak.
-    if (data.runCount >= 1)
-      prof_stats->block_stats.emplace_back(block.effectiveAddress, cost, timecost, data.runCount,
-                                           block.codeSize);
-    prof_stats->cost_sum += cost;
-    prof_stats->timecost_sum += timecost;
-  });
-
-  sort(prof_stats->block_stats.begin(), prof_stats->block_stats.end());
-  if (old_state == Core::State::Running)
-    Core::SetState(Core::State::Running);
+  if (g_jit)
+  {
+    g_jit->GetProfileResults(prof_stats);
+  }
 }
 
 void WriteProfileResults(const std::string& filename)
@@ -157,41 +124,12 @@ void WriteProfileResults(const std::string& filename)
 
 int GetHostCode(u32* address, const u8** code, u32* code_size)
 {
-  if (!g_common_jit)
+  if (!g_jit)
   {
     *code_size = 0;
     return 1;
   }
-
-  JitBlock* block = g_common_jit->GetBlockCache()->GetBlockFromStartAddress(*address, MSR.Hex);
-  if (!block)
-  {
-    for (int i = 0; i < 500; i++)
-    {
-      block = g_common_jit->GetBlockCache()->GetBlockFromStartAddress(*address - 4 * i, MSR.Hex);
-      if (block)
-        break;
-    }
-
-    if (block)
-    {
-      if (!(block->effectiveAddress <= *address &&
-            block->originalSize + block->effectiveAddress >= *address))
-        block = nullptr;
-    }
-
-    // Do not merge this "if" with the above - block_num changes inside it.
-    if (!block)
-    {
-      *code_size = 0;
-      return 2;
-    }
-  }
-
-  *code = block->checkedEntry;
-  *code_size = block->codeSize;
-  *address = block->effectiveAddress;
-  return 0;
+  return g_jit->GetHostCode(address, code, code_size);
 }
 
 bool HandleFault(uintptr_t access_address, SContext* ctx)
@@ -234,39 +172,8 @@ void InvalidateICache(u32 address, u32 size, bool forced)
 
 void CompileExceptionCheck(ExceptionType type)
 {
-  if (!g_common_jit)
-    return;
-
-  std::unordered_set<u32>* exception_addresses = nullptr;
-
-  switch (type)
-  {
-  case ExceptionType::FIFOWrite:
-    exception_addresses = &g_common_jit->js.fifoWriteAddresses;
-    break;
-  case ExceptionType::PairedQuantize:
-    exception_addresses = &g_common_jit->js.pairedQuantizeAddresses;
-    break;
-  case ExceptionType::SpeculativeConstants:
-    exception_addresses = &g_common_jit->js.noSpeculativeConstantsAddresses;
-    break;
-  }
-
-  if (PC != 0 && (exception_addresses->find(PC)) == (exception_addresses->end()))
-  {
-    if (type == ExceptionType::FIFOWrite)
-    {
-      // Check in case the code has been replaced since: do we need to do this?
-      const OpType optype = PPCTables::GetOpInfo(PowerPC::HostRead_U32(PC))->type;
-      if (optype != OpType::Store && optype != OpType::StoreFP && optype != OpType::StorePS)
-        return;
-    }
-    exception_addresses->insert(PC);
-
-    // Invalidate the JIT block so that it gets recompiled with the external exception check
-    // included.
-    g_jit->InvalidateICache(PC, 4, true);
-  }
+  if (g_jit)
+    g_jit->CompileExceptionCheck(type);
 }
 
 void Shutdown()
@@ -275,7 +182,7 @@ void Shutdown()
   {
     g_jit->Shutdown();
     delete g_jit;
-    g_jit = g_common_jit = nullptr;
+    g_jit = nullptr;
   }
 }
 }

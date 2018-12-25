@@ -17,6 +17,7 @@
 #include "Core/PowerPC/JitCommon/JitCache.h"
 #include "Core/PowerPC/JitInterface.h"
 #include "Core/PowerPC/PPCAnalyst.h"
+#include "Core/PowerPC/Profiler.h"
 
 //#define JIT_LOG_GENERATED_CODE  // Enables logging of generated code
 //#define JIT_LOG_GPR             // Enables logging of the PPC general purpose regs
@@ -43,19 +44,36 @@
 class JitBase : public CPUCoreBase
 {
 public:
+  /// handle invalid memory accesses and return true if caused by fastmem, return false otherwise.
+  /// should be safe to execute inside a signal handler
   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;
+  /// handle stack overflows while in JIT code
   virtual bool HandleStackFault() { return false; }
+  /// clear all JIT caches and code spaces; do not call while potentially inside JIT code!
   virtual void ClearCache() = 0;
+  /// invalidate dispatch caches, but do not clear code spaces; must be safe to call inside JIT code
   virtual void ClearSafe() = 0;
+  /// remove any blocks intersecting the specified range from any JIT caches
   virtual void InvalidateICache(u32 address, u32 size, bool forced) = 0;
+  /// find a block of host machine code that emulates the instruction at the specified address.
+  /// return 0 if a block was found, and fill out address with the effective address of the entry of
+  /// the block, code with the entry point of the host code and code_size with the size of the block
+  /// in host machine code. if no block was found, return 2 and set code_size to 0. if getting host
+  /// machine code block is unsupported, return 1 and set code_size to 0.
+  virtual int GetHostCode(u32* address, const u8** code, u32* code_size)
+  {
+    *code_size = 0;
+    return 1;
+  }
+  virtual void EnableProfiling(bool enabled) {}
+  virtual void GetProfileResults(Profiler::ProfileStats* prof_stats) {}
+  virtual void CompileExceptionCheck(JitInterface::ExceptionType) {}
 };
 
 class JitBaseBlockCache;
 
 class JitCommonBase : public JitBase
 {
-  friend void JitInterface::CompileExceptionCheck(JitInterface::ExceptionType type);
-  friend void JitInterface::SetProfilingState(JitInterface::ProfilingState state);
   friend class JitBaseBlockCache;
 
 protected:
@@ -134,6 +152,10 @@ public:
     GetBlockCache()->InvalidateICache(address, size, forced);
   }
   void ClearSafe() { GetBlockCache()->Clear(); }
+  virtual int GetHostCode(u32* address, const u8** code, u32* code_size);
+  virtual void GetProfileResults(Profiler::ProfileStats* prof_stats);
+  virtual void CompileExceptionCheck(JitInterface::ExceptionType);
+  virtual void EnableProfiling(bool enabled) { jo.profile_blocks = enabled; }
 
   static const u8* Dispatch(JitCommonBase& jit);
 

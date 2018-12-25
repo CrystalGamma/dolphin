@@ -38,13 +38,7 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core);
 CPUCoreBase* GetCore();
 
 // Debugging
-enum class ProfilingState
-{
-  Enabled,
-  Disabled
-};
-
-void SetProfilingState(ProfilingState state);
+void EnableProfiling(bool enable);
 void WriteProfileResults(const std::string& filename);
 int GetHostCode(u32* address, const u8** code, u32* code_size);
 
