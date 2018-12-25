@@ -140,9 +140,9 @@ protected:
   /// (use ~FLAG_MASK to get the address)
   static constexpr u32 FLAG_MASK = 3;
 
-  static constexpr int DISP_CACHE_SHIFT = 8;
+  static constexpr int DISP_CACHE_SHIFT = 9;
   static constexpr size_t DISP_PRIMARY_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
-  static constexpr int VICTIM_SETS_SHIFT = 3;
+  static constexpr int VICTIM_SETS_SHIFT = 6;
   static constexpr size_t VICTIM_SETS = 1 << VICTIM_SETS_SHIFT;
   static constexpr int VICTIM_WAYS_SHIFT = 5;
   static constexpr size_t VICTIM_WAYS = 1 << VICTIM_WAYS_SHIFT;
