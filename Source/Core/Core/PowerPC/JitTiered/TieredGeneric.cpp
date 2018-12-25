@@ -18,9 +18,9 @@ void JitTieredGeneric::ClearCache()
 {
   // invalidate dispatch cache
   disp_cache = {};
-  BaselineReport& report = baseline_report.GetWriter();
-  report.invalidation_bloom = BloomAll();
-  report.invalidations.push_back({0, 0xffffffff});
+  next_report.invalidation_bloom = BloomAll();
+  next_report.invalidations.push_back({0, 0xffffffff});
+  INFO_LOG(DYNA_REC, "%08x: clearing cache", PC);
 }
 
 static bool overlaps(u32 block_start, u32 block_len, u32 first_inval, u32 last_inval)
@@ -30,93 +30,112 @@ static bool overlaps(u32 block_start, u32 block_len, u32 first_inval, u32 last_i
          (block_start >= first_inval && block_start <= last_inval);
 }
 
-void JitTieredGeneric::InvalidateICache(u32 address, u32 size, bool forced)
+void JitTieredGeneric::InvalidateICache(const u32 address, const u32 size, const bool forced)
 {
   if (size == 0)
   {
     return;  // zero-sized invalidations don't have a 'last invalidated byte' so exit early
   }
-  u32 end = address + size - 1;
-  BaselineReport& report = baseline_report.GetWriter();
-  report.invalidation_bloom |= BloomRange(address, end);
-  report.invalidations.push_back({address, end});
-  for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
+  const u32 end = address + size - 1;
+  // INFO_LOG(DYNA_REC, "%08x: invalidate %08x–%08x", PC, address, end);
+  next_report.invalidation_bloom |= BloomRange(address, end);
+  next_report.invalidations.push_back({address, end});
+  for (auto& entry : disp_cache)
   {
-    if ((disp_cache[i].address & FLAG_MASK) <= 1)
+    if ((entry.address & FLAG_MASK) <= 1)
     {
       // catches 0 case (invalid entry) too, but this invalidates anyway (⇒ safe)
-      if (overlaps(disp_cache[i].address & ~FLAG_MASK, disp_cache[i].len * 4, address, end))
+      if (overlaps(entry.address & ~FLAG_MASK, entry.len * 4, address, end))
       {
-        disp_cache[i].address = 0;
+        INFO_LOG(DYNA_REC, "removing Baseline block @ %08x", entry.address & ~FLAG_MASK);
+        entry.address = 0;
       }
+    }
+    else if (entry.bloom & next_report.invalidation_bloom)
+    {
+      INFO_LOG(DYNA_REC, "removing optimized block @ %08x", entry.address & ~FLAG_MASK);
+      entry.address = 0;
     }
   }
 }
 
-void JitTieredGeneric::CompactInterpreterBlocks(bool keep_old_blocks = false)
+void JitTieredGeneric::CompactInterpreterBlocks(BaselineReport* const report,
+                                                const bool keep_old_blocks)
 {
-  auto report = baseline_report.GetWriter();
-  report.instructions.clear();
-  report.blocks.clear();
-  for (size_t i = 0; i < DISP_CACHE_SIZE; i += 1)
+  report->instructions.clear();
+  report->blocks.clear();
+  u32 pos = 0;
+  for (auto& entry : disp_cache)
   {
-    u32 address = disp_cache[i].address;
-    if ((address & FLAG_MASK) == 0 && address)
+    const u32 address = entry.address;
+    if (!address)
     {
-      u32 offset = disp_cache[i].offset;
-      if (keep_old_blocks || offset >= offset_new)
+      continue;
+    }
+    if ((address & FLAG_MASK) <= 1)
+    {
+      report->blocks.push_back({address, pos, entry.usecount});
+      if ((address & FLAG_MASK) == 0)
       {
-        u32 start = static_cast<u32>(report.instructions.size());
-        report.blocks.push_back({address, start, disp_cache[i].usecount});
-        u32 len = static_cast<u32>(disp_cache[i].len);
-        for (u32 n = 0; n < len; n += 1)
+        const u32 offset = entry.offset;
+        const u32 len = static_cast<u32>(entry.len);
+        if (len > 0 && (keep_old_blocks || offset >= offset_new))
         {
-          report.instructions.push_back(inst_cache[offset + n]);
+          for (u32 n = 0; n < len; n += 1)
+          {
+            report->instructions.push_back(next_report.instructions[offset + n]);
+          }
+          // update offset to position after compaction
+          entry.offset = pos;
+          pos += len;
         }
-        // update offset to position after compaction
-        disp_cache[i].offset = start;
-      }
-      else
-      {
-        // block is old and will disappear with this compaction ⇒ invalidate
-        disp_cache[i].address = 0;
+        else
+        {
+          // block is old (or empty) and will disappear with this compaction ⇒ invalidate
+          INFO_LOG(DYNA_REC, "compacting away block @ %08x (used %u times)",
+                   entry.address & ~FLAG_MASK, entry.usecount);
+          entry.address = 0;
+        }
       }
     }
   }
   // copy compacted blocks into interpreter cache
-  inst_cache = report.instructions;
-  offset_new = report.instructions.size();
+  next_report.instructions = report->instructions;
+  offset_new = pos;
   // sentinel value to make calculating the length in Baseline easier
-  report.blocks.push_back({0, static_cast<u32>(offset_new), 0});
+  report->blocks.push_back({0, static_cast<u32>(offset_new), 0});
 }
 
-u32 JitTieredGeneric::FindBlock(u32 address)
+u32 JitTieredGeneric::FindBlock(const u32 address)
 {
-  u32 key = DispatchCacheKey(address);
-  u32 cache_addr = disp_cache[key].address;
+  const u32 key = DispatchCacheKey(address);
+  DispCacheEntry& primary_entry = disp_cache.at(key);
+  const u32 cache_addr = primary_entry.address;
   if ((cache_addr & ~FLAG_MASK) == address)
   {
     // best outcome: we have the block in primary cache
     return key;
   }
   // not in primary cache, search victim cache
-  u32 victim_set = key >> (DISP_CACHE_SHIFT - VICTIM_SETS_SHIFT);
-  u32 victim_start = DISP_PRIMARY_CACHE_SIZE + (victim_set << VICTIM_WAYS_SHIFT);
-  u32 victim_end = victim_start + VICTIM_WAYS;
+  const u32 victim_set = key >> (DISP_CACHE_SHIFT - VICTIM_SETS_SHIFT);
+  const u32 victim_start = DISP_PRIMARY_CACHE_SIZE + (victim_set << VICTIM_WAYS_SHIFT);
+  const u32 victim_end = victim_start + VICTIM_WAYS;
   bool found_vacancy = false;
   u32 pos = 0;
   for (u32 i = victim_start; i < victim_end; i += 1)
   {
-    if ((disp_cache[i].address & ~FLAG_MASK) == address)
+    DispCacheEntry& victim_entry = disp_cache.at(i);
+    if ((victim_entry.address & ~FLAG_MASK) == address)
     {
       // second-best outcome: we find the block in victim cache ⇒ swap and done
-      DispCacheEntry tmp = disp_cache[key];
-      disp_cache[key] = disp_cache[i];
-      disp_cache[i] = tmp;
-      victim_second_chance[i] = true;
+      // INFO_LOG(DYNA_REC, "%08x: victim hit", PC);
+      DispCacheEntry tmp = primary_entry;
+      primary_entry = victim_entry;
+      victim_entry = tmp;
+      victim_second_chance.set(i - DISP_PRIMARY_CACHE_SIZE);
       return key;
     }
-    if (disp_cache[i].address == 0)
+    if (victim_entry.address == 0)
     {
       // third-best outcome: we have a vacancy in victim cache
       // (but continue searching for a real match)
@@ -124,26 +143,35 @@ u32 JitTieredGeneric::FindBlock(u32 address)
       pos = i;
     }
   }
-  if (!found_vacancy && cache_addr != 0)
+  if (cache_addr != 0)
   {
-    // worst outcome: we have to evict from victim cache
-    u32 clock = victim_clocks[victim_set];
-    for (u32 i = 0; i < VICTIM_WAYS; i += 1)
+    if (found_vacancy)
     {
-      pos = victim_start + clock;
-      if (victim_second_chance[pos])
-      {
-        victim_second_chance[pos] = false;
-      }
-      else
-      {
-        break;
-      }
-      clock = (clock + 1) % VICTIM_WAYS;
+      // INFO_LOG(DYNA_REC, "%08x: swap %08x", PC, cache_addr);
+      disp_cache.at(pos) = primary_entry;
     }
-    victim_clocks[victim_set] = clock;
-    disp_cache[pos] = disp_cache[key];
-    victim_second_chance[pos] = true;
+    else
+    {
+      // worst outcome: we have to evict from victim cache
+      u32 clock = victim_clocks.at(victim_set);
+      for (u32 i = 0; i < VICTIM_WAYS; i += 1)
+      {
+        pos = victim_start + clock;
+        if (victim_second_chance.test(pos - DISP_PRIMARY_CACHE_SIZE))
+        {
+          victim_second_chance.reset(pos - DISP_PRIMARY_CACHE_SIZE);
+        }
+        else
+        {
+          break;
+        }
+        clock = (clock + 1) % VICTIM_WAYS;
+      }
+      WARN_LOG(DYNA_REC, "%08x: evict %08x", PC, disp_cache.at(pos).address);
+      victim_clocks.at(victim_set) = clock;
+      disp_cache.at(pos) = primary_entry;
+      victim_second_chance.set(pos - DISP_PRIMARY_CACHE_SIZE);
+    }
   }
   // at this point, the primary cache contains an invalid entry
   // (or one that has already been saved to victim cache)
@@ -153,18 +181,20 @@ u32 JitTieredGeneric::FindBlock(u32 address)
   return LookupBlock(key, address);
 }
 
-u32 JitTieredGeneric::LookupBlock(u32 key, u32 address)
+u32 JitTieredGeneric::LookupBlock(const u32 key, const u32 address)
 {
   // we have no JIT to get blocks from, so just create new interpreter block unconditionally
-  disp_cache[key].address = address;
-  disp_cache[key].offset = (u32)inst_cache.size();
-  disp_cache[key].len = disp_cache[key].usecount = 0;
+  INFO_LOG(DYNA_REC, "%08x: new block", PC);
+  auto& entry = disp_cache.at(key);
+  entry.address = address;
+  entry.offset = static_cast<u32>(next_report.instructions.size());
+  entry.len = entry.usecount = 0;
   return key;
 }
 
-static bool IsRedispatchInstruction(UGeckoInstruction inst)
+static bool IsRedispatchInstruction(const UGeckoInstruction inst)
 {
-  auto info = PPCTables::GetOpInfo(inst);
+  const GekkoOPInfo* info = PPCTables::GetOpInfo(inst);
   return inst.OPCD == 9                               // sc
          || (inst.OPCD == 31 && inst.SUBOP10 == 146)  // mtmsr
          || (info->flags & FL_CHECKEXCEPTIONS)        // rfi
@@ -202,13 +232,13 @@ void JitTieredGeneric::RunZeroInstruction()
   }
 }
 
-void JitTieredGeneric::InterpretBlock(u32 index)
+bool JitTieredGeneric::InterpretBlock(u32 index)
 {
-  u32 len = disp_cache[index].len;
-  u32 offset = disp_cache[index].offset;
+  const u32 len = disp_cache.at(index).len;
+  const u32 offset = disp_cache.at(index).offset;
   for (u32 pos = offset; pos < offset + len; pos += 1)
   {
-    auto& inst = inst_cache[pos];
+    auto& inst = next_report.instructions[pos];
     NPC = PC + 4;
     if (inst.uses_fpu && !MSR.FP)
     {
@@ -223,49 +253,57 @@ void JitTieredGeneric::InterpretBlock(u32 index)
       PowerPC::CheckExceptions();
       PowerPC::ppcState.downcount -= inst.cycles;
       PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
-      return;
+      return false;
     }
     if (NPC != PC + 4)
     {
       PowerPC::ppcState.downcount -= inst.cycles;
       PC = NPC;
-      return;
+      return false;
     }
     PC = NPC;
   }
-  u32 cycles = 0;
   if (len != 0)
   {
-    auto& last = inst_cache[offset + len - 1];
-    cycles = last.cycles;
+    const DecodedInstruction& last = next_report.instructions[offset + len - 1];
+    PowerPC::ppcState.downcount -= last.cycles;
     if (IsRedispatchInstruction(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
     {
       // even if the block didn't end here, we have to go back to dispatcher
       // because of e. g. invalidation or breakpoints
-      PowerPC::ppcState.downcount -= cycles;
-      return;
+      return false;
     }
   }
-  // overrun: add more instructions to block
-  if (offset + len != inst_cache.size())
+  return true;
+}
+
+void JitTieredGeneric::ReadInstructions(u32 index)
+{
+  auto& cache_entry = disp_cache.at(index);
+  const u32 len = cache_entry.len;
+  const u32 offset = cache_entry.offset;
+  u32 cycles_old = 0;
+  if (offset + len != next_report.instructions.size())
   {
     // we can only append to the last block, so copy this one to the end
-    disp_cache[index].offset = static_cast<u32>(inst_cache.size());
+    cache_entry.offset = static_cast<u32>(next_report.instructions.size());
     for (u32 pos = offset; pos < offset + len; pos += 1)
     {
-      inst_cache.push_back(inst_cache[pos]);
+      next_report.instructions.push_back(next_report.instructions[pos]);
+      cycles_old = next_report.instructions[pos].cycles;
     }
-    // following code should not index into inst_cache, but just to be sure
-    offset = disp_cache[index].offset;
+    // following code must not index into next_report.instructions
   }
+  u32 cycles_new = 0;
   do
   {
     // handle temporary breakpoints
     PowerPC::CheckBreakPoints();
-    auto inst = UGeckoInstruction(PowerPC::Read_Opcode(PC));
+    const UGeckoInstruction inst(PowerPC::Read_Opcode(PC));
     if (inst.hex == 0)
     {
       PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
+      PowerPC::ppcState.downcount -= cycles_new;
       PowerPC::CheckExceptions();
       return;
     }
@@ -275,16 +313,16 @@ void JitTieredGeneric::InterpretBlock(u32 index)
       INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
       break;
     }
-    cycles += PPCTables::GetOpInfo(inst)->numCycles;
-    auto func = PPCTables::GetInterpreterOp(inst);
-    bool uses_fpu = PPCTables::UsesFPU(inst);
+    cycles_new += PPCTables::GetOpInfo(inst)->numCycles;
+    const InterpreterFunc func = PPCTables::GetInterpreterOp(inst);
+    const bool uses_fpu = PPCTables::UsesFPU(inst);
     DecodedInstruction dec_inst;
     dec_inst.func = func;
     dec_inst.inst = inst;
-    dec_inst.cycles = cycles;
+    dec_inst.cycles = cycles_old + cycles_new;
     dec_inst.uses_fpu = static_cast<u32>(uses_fpu);
     dec_inst.needs_slowmem = 1;
-    disp_cache[index].len += 1;
+    cache_entry.len += 1;
     NPC = PC + 4;
     if (uses_fpu && !MSR.FP)
     {
@@ -306,11 +344,11 @@ void JitTieredGeneric::InterpretBlock(u32 index)
       }
       func(inst);
     }
-    inst_cache.push_back(dec_inst);
+    next_report.instructions.push_back(dec_inst);
     if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
+      PowerPC::ppcState.downcount -= cycles_new;
       PowerPC::CheckExceptions();
-      PowerPC::ppcState.downcount -= cycles;
       PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
       return;
     }
@@ -320,7 +358,7 @@ void JitTieredGeneric::InterpretBlock(u32 index)
       break;
     }
   } while (PC == NPC);
-  PowerPC::ppcState.downcount -= cycles;
+  PowerPC::ppcState.downcount -= cycles_new;
   PC = NPC;
 }
 
@@ -329,9 +367,9 @@ void JitTieredGeneric::SingleStep()
   CoreTiming::Advance();
   RunZeroInstruction();
   u32 key = FindBlock(PC);
-  if ((disp_cache[key].address & FLAG_MASK) <= 1)
+  if ((disp_cache.at(key).address & FLAG_MASK) <= 1)
   {
-    disp_cache[key].usecount += 1;
+    disp_cache.at(key).usecount += 1;
   }
   InterpretBlock(key);
 }
@@ -339,16 +377,16 @@ void JitTieredGeneric::SingleStep()
 void JitTieredGeneric::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
-  size_t last_cache_size = 0;
+  BaselineReport last_report;
   while (*state == CPU::State::Running)
   {
     CoreTiming::Advance();
     // this heuristic works well for the interpreter-only case
-    size_t num_instructions = inst_cache.size();
-    if (num_instructions >= (1 << 20) && num_instructions >= 2 * last_cache_size)
+    size_t num_instructions = next_report.instructions.size();
+    if (num_instructions >= (1 << 20) && num_instructions >= 2 * last_report.instructions.size())
     {
-      CompactInterpreterBlocks(true);
-      last_cache_size = inst_cache.size();
+      CompactInterpreterBlocks(&last_report, true);
+      next_report.invalidations.clear();
     }
     do
     {
@@ -356,8 +394,12 @@ void JitTieredGeneric::Run()
       u32 start_addr = PC;
       u32 key = FindBlock(start_addr);
       // the generic path only creates interpreter blocks.
-      disp_cache[key].usecount += 1;
-      InterpretBlock(key);
+      disp_cache.at(key).usecount += 1;
+      bool overrun = InterpretBlock(key);
+      if (overrun)
+      {
+        ReadInstructions(key);
+      }
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
 }

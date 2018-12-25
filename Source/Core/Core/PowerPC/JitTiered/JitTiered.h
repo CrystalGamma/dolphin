@@ -7,7 +7,6 @@
 #include <bitset>
 #include <vector>
 
-#include "Common/HandShake.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 
 /// generic path of the Tiered JIT framework.
@@ -75,25 +74,25 @@ protected:
   };
   static_assert(sizeof(DecodedInstruction) <= 16, "Decoded instruction should fit in 16 bytes");
 
+  struct CompactedBlock
+  {
+    u32 address;
+    u32 start;
+    u32 usecount;
+  };
+  struct Invalidation
+  {
+    u32 first;
+    u32 last;
+  };
   struct BaselineReport
   {
-    struct CompactedBlock
-    {
-      u32 address;
-      u32 start;
-      u32 usecount;
-    };
-    struct Invalidation
-    {
-      u32 first;
-      u32 last;
-    };
     /// has sentinel value with address = 0 and start = instructions.size() to make block size
     /// calculation easier
     std::vector<CompactedBlock> blocks;
     std::vector<DecodedInstruction> instructions;
     std::vector<Invalidation> invalidations;
-    Bloom invalidation_bloom;
+    Bloom invalidation_bloom = BloomNone();
   };
 
   template <int bits, int shift_off>
@@ -125,8 +124,9 @@ protected:
     return res;
   }
 
-  void CompactInterpreterBlocks(bool keep_old_blocks);
-  void InterpretBlock(u32);
+  void CompactInterpreterBlocks(BaselineReport* report, bool keep_old_blocks);
+  bool InterpretBlock(u32);
+  void ReadInstructions(u32);
   void RunZeroInstruction();
 
   u32 FindBlock(u32 address);
@@ -154,17 +154,12 @@ protected:
   std::array<DispCacheEntry, DISP_CACHE_SIZE> disp_cache{};
 
   /// second-chance bits for the WS-Clock eviction algorithm
-  std::bitset<VICTIM_SETS * VICTIM_WAYS> victim_second_chance;
+  std::bitset<VICTIM_SETS * VICTIM_WAYS> victim_second_chance{};
   /// clocks for the WS-Clock eviction algorithm
-  std::array<u8, VICTIM_SETS> victim_clocks;
+  std::array<u8, VICTIM_SETS> victim_clocks{};
 
-  /// contents of interpreter blocks
-  std::vector<DecodedInstruction> inst_cache;
-  /// offset in inst_cache at which new instructions begin
+  BaselineReport next_report;
+
+  /// offset in next_report.instructions at which new instructions begin
   size_t offset_new = 0;
-
-  /// interface to Baseline JIT thread.
-  /// Defined in the generic class because it is used in compaction and contains the invalidation
-  /// bloom filter
-  HandShake<BaselineReport> baseline_report;
 };
