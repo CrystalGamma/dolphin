@@ -206,7 +206,7 @@ protected:
 
   void CPUDoReport(bool wait, bool hint);
   bool OverrunBaseline(u32 start_addr, u32 key);
-  virtual u32 LookupBlock(u32 key, u32 address) final;
+  virtual u32 LookupBlock(u32 key, u32 address);
 
   /// on JIT thread: invalidates entries in the Block DB and the dispatch cache with the given types
   /// and in the specified range (note: this range is of entry points. it is assumed that no entry
