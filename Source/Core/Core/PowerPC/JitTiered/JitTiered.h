@@ -208,10 +208,6 @@ protected:
   bool OverrunBaseline(u32 start_addr, u32 key);
   virtual u32 LookupBlock(u32 key, u32 address);
 
-  /// on JIT thread: invalidates entries in the Block DB and the dispatch cache with the given types
-  /// and in the specified range (note: this range is of entry points. it is assumed that no entry
-  /// points invalidated by the reclamation are beyond the 'last' parameter)
-  void ReclaimCodeSpace(bool baseline, bool optimized, u32 first, u32 last);
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
                      std::map<u32, ReportedBlock>* reported_blocks);
