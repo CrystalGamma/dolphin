@@ -33,6 +33,17 @@ public:
   virtual bool HandleFault(uintptr_t, SContext*) { return false; }
   virtual void InvalidateICache(u32 address, u32 size, bool forced) final;
 
+  virtual int GetHostCode(u32* address, const u8** code, u32* code_size)
+  {
+    // generic path has no machine code
+    *code_size = 0;
+    return 1;
+  }
+  // these three do nothing for now (but might very well in the future)
+  virtual void EnableProfiling(bool enabled) {}
+  virtual void GetProfileResults(Profiler::ProfileStats* prof_stats) {}
+  virtual void CompileExceptionCheck(JitInterface::ExceptionType) {}
+
 protected:
   // for invalidation of JIT blocks
   using Bloom = u64;
