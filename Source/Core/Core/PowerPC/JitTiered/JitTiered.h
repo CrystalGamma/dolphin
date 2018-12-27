@@ -47,54 +47,51 @@ public:
 protected:
   // for invalidation of JIT blocks
   using Bloom = u64;
-  struct DispCacheEntry
-  {
-    /// PPC instructions are 4-byte aligned, leaving us 2 flag bits with these values:
-    /// 0: interpreter (or invalid, if all 0)
-    /// 1: Baseline JIT
-    /// 2: Optimized JIT
-    u32 address;
-    /// if interpreter: offset into inst_cache vector
-    /// if JIT: offset to JIT code (passed verbatim to entry function)
-    u32 offset;
-    union
-    {
-      /// if JIT block
-      Bloom bloom;
-      /// if interpreter block
-      struct
-      {
-        // number of instructions
-        u32 len;
-        // number of times the block was entered
-        u32 usecount;
-      };
-    };
-  };
-  static_assert(sizeof(DispCacheEntry) <= 16, "Dispatch cache entry should fit in 16 bytes");
+  using Executor = u32 (*)(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
+                           void* toc);
+  using InterpreterFunc = void (*)(UGeckoInstruction);
 
-  typedef void (*InterpreterFunc)(UGeckoInstruction);
+  enum ExecutorFlags : u32
+  {
+    BLOCK_OVERRUN = 1,
+    REPORT_IMMEDIATELY = 2,
+  };
+
+  struct DispatchCacheEntry
+  {
+    u32 address;
+    u32 offset;
+    Executor executor;
+    Bloom bloom;
+    u32 length;
+    u32 usecount;
+
+    bool IsValid() const { return executor != nullptr; }
+    void Invalidate() { executor = nullptr; }
+  };
+  static_assert(sizeof(DispatchCacheEntry) <= 32, "Dispatch cache entry should fit in 32 bytes");
+
+  enum InstructionFlags : u16
+  {
+    // this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
+    // functions themselves)
+    USES_FPU = 1,
+    // this instruction has been known to access addresses that are not optimizable RAM addresses
+    // currently checked for D-form load/stores on first execution
+    NEEDS_SLOWMEM = 2,
+  };
+
   struct DecodedInstruction
   {
     InterpreterFunc func;
     UGeckoInstruction inst;
     /// prefix sum of estimated cycles from start of block
-    u32 cycles : 30;
-    // whether this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
-    // functions themselves)
-    u32 uses_fpu : 1;
-    // whether this instruction has been known to access addresses not available to fastmem
-    // currently always set to 1 except for some non-indexed load/stores
-    u32 needs_slowmem : 1;
+    u16 cycles;
+    /// see Instructionflags
+    u16 flags;
   };
   static_assert(sizeof(DecodedInstruction) <= 16, "Decoded instruction should fit in 16 bytes");
 
-  struct CompactedBlock
-  {
-    u32 address;
-    u32 start;
-    u32 usecount;
-  };
   struct Invalidation
   {
     u32 first;
@@ -102,9 +99,7 @@ protected:
   };
   struct BaselineReport
   {
-    /// has sentinel value with address = 0 and start = instructions.size() to make block size
-    /// calculation easier
-    std::vector<CompactedBlock> blocks;
+    std::vector<DispatchCacheEntry> blocks;
     std::vector<DecodedInstruction> instructions;
     std::vector<Invalidation> invalidations;
     Bloom invalidation_bloom = BloomNone();
@@ -125,6 +120,7 @@ protected:
 
   static Bloom BloomNone() { return 0; }
   static Bloom BloomAll() { return ~BloomNone(); }
+  static Bloom BloomCacheline(u32 address) { return u64(1) << XorFold<6, 0>(address >> 5); }
   static Bloom BloomRange(u32 first, u32 last)
   {
     // we only have (guest) cacheline resolution (32=2^5 bytes)
@@ -133,30 +129,30 @@ protected:
     Bloom res = BloomNone();
     while (first <= last)
     {
-      res |= (u64)1 << XorFold<6, 0>(first);
+      res |= u64(1) << XorFold<6, 0>(first);
       first += 1;
     }
     return res;
   }
 
+  static u32 InterpreterExecutor(JitTieredGeneric* self, u32 offset,
+                                 PowerPC::PowerPCState* ppcState, void* toc)
+  {
+    return self->InterpretBlock(offset) ? BLOCK_OVERRUN : 0;
+  }
+
   void CompactInterpreterBlocks(BaselineReport* report, bool keep_old_blocks);
-  bool InterpretBlock(u32);
-  void ReadInstructions(u32);
+  bool InterpretBlock(u32 start);
+  void ReadInstructions(DispatchCacheEntry* entry);
   void RunZeroInstruction();
 
-  u32 FindBlock(u32 address);
+  DispatchCacheEntry* FindBlock(u32 address);
   /// tail-called by FindBlock if it doesn't find a block in the dispatch cache.
-  /// *must* create a block of some kind at the index `key` in the dispatch cache, and return `key`.
   /// the default implementation just creates a new interpreter block.
-  virtual u32 LookupBlock(u32 key, u32 address);
+  virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry* entry, u32 address);
 
   static constexpr u32 EXCEPTION_SYNC =
       ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
-
-  /// the least-significant two bits of instruction addresses are always zero, so we can use them
-  /// for flags. this constant can be used to mask out the address
-  /// (use ~FLAG_MASK to get the address)
-  static constexpr u32 FLAG_MASK = 3;
 
   static constexpr int DISP_CACHE_SHIFT = 9;
   static constexpr size_t DISP_PRIMARY_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
@@ -166,10 +162,12 @@ protected:
   static constexpr size_t VICTIM_WAYS = 1 << VICTIM_WAYS_SHIFT;
   static constexpr size_t DISP_CACHE_SIZE = DISP_PRIMARY_CACHE_SIZE + VICTIM_SETS * VICTIM_WAYS;
 
+  Executor interpreter_executor = InterpreterExecutor;
+
   /// direct-associative cache (hash table) for blocks, followed by victim cache
   /// (contiguous for iteration convenience)
   /// JIT threads may only delete entries, not create them (safety invariant)
-  std::array<DispCacheEntry, DISP_CACHE_SIZE> disp_cache{};
+  std::array<DispatchCacheEntry, DISP_CACHE_SIZE> dispatch_cache{};
 
   /// second-chance bits for the WS-Clock eviction algorithm
   std::bitset<VICTIM_SETS * VICTIM_WAYS> victim_second_chance{};
