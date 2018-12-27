@@ -27,4 +27,10 @@ protected:
 private:
   u32* code;
 };
+
+class PPCCodeSpace : public Common::CodeBlock<NativeEndianEmitter>
+{
+private:
+  virtual void PoisonMemory() {}
+};
 }

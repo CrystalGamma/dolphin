@@ -227,6 +227,8 @@ protected:
   /// and don't need to consider this filter anymore)
   Bloom old_bloom = BloomNone();
 
+  void* current_toc = nullptr;
+
   /// whether to run the Baseline JIT on the CPU thread
   /// (override with false in subclasses, except for debugging)
   bool on_thread_baseline = true;
@@ -253,6 +255,7 @@ protected:
   bool report_sent = false;
   bool quit = false;
   BaselineReport baseline_report;
+  void* next_toc = nullptr;
 
   // === Baseline thread data ===
   alignas(CACHELINE) std::map<u32, u32> block_counters;

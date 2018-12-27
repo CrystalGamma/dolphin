@@ -38,6 +38,7 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
       baseline_report.invalidation_bloom = next_report.invalidation_bloom;
       baseline_report.invalidations.swap(next_report.invalidations);
       old_bloom = next_report.invalidation_bloom;
+      current_toc = next_toc;
       next_report.invalidation_bloom = BloomNone();
       report_sent = true;
       lock.unlock();
