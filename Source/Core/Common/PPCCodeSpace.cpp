@@ -8,8 +8,6 @@
 
 #include "Common/CPUDetect.h"
 
-namespace PPCGen
-{
 void NativeEndianEmitter::Emit(const std::vector<u32>& instructions)
 {
   std::memcpy(code, instructions.data(), instructions.size() * 4);
@@ -47,5 +45,4 @@ void NativeEndianEmitter::FlushCode(char* start, size_t length)
     // on POWER9, any address will do, use the given pointer
     asm volatile("icbi 0, %0" : : "r"(start));
   }
-}
 }

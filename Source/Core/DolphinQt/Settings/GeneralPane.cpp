@@ -50,6 +50,7 @@ static const std::map<PowerPC::CPUCore, const char*> CPU_CORE_NAMES = {
     {PowerPC::CPUCore::TieredDummy, QT_TR_NOOP("Tiered dummy JIT (slow, experimental)")},
     {PowerPC::CPUCore::JIT64, QT_TR_NOOP("JIT Recompiler (recommended)")},
     {PowerPC::CPUCore::JITARM64, QT_TR_NOOP("JIT Arm64 (experimental)")},
+    {PowerPC::CPUCore::TieredPPC64, QT_TR_NOOP("Tiered PPC64 JIT (experimental)")},
 };
 
 GeneralPane::GeneralPane(QWidget* parent) : QWidget(parent)

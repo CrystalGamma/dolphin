@@ -2,107 +2,109 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
-#include "Core/PowerPC/TieredPPC64.h"
+#include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
-#include "Core/PowerPC/PPC64Baseline.h"
+#include <cinttypes>
+
+#include "Core/PowerPC/Gekko.h"
+#include "Core/PowerPC/JitTiered/PPC64Baseline.h"
 
 JitTieredPPC64::JitTieredPPC64()
 {
   codespace.AllocCodeSpace(CODESPACE_CELL_SIZE * CODESPACE_CELLS * 4);
-  enter_baseline_block = codespace.GetCodePtr();
-  PPCEmitter emit;
-  // call frame allocation
-  emit.MFSPR(R0, LR);
-  emit.STD(R0, R1, 16);
-  emit.STD(R1, R1, -32, UPDATE);
-  // calculate address
-  emit.B(4, true);
-  emit.MFSPR(R0, LR);
-  emit.RLDICR(R4, R4, 2, 61);
-  emit.ADD(R4, R4, R0);
-  // jump to address
-  emit.MTSPR(CTR, R4);
-  emit.BCCTR(BRANCH_ALWAYS, 0);
-  codespace.Emit(emit.instructions);
-  entry_length = emit.instructions.size();
+  for (u32 opcode = 0; opcode < 64; ++opcode)
+  {
+    toc.fallback_table[opcode] = PPCTables::GetInterpreterOp(opcode << 26);
+  }
+  std::array<u32, 4> arr = {4, 19, 31, 63};
+  for (u32 i = 0; i < 4; ++i)
+  {
+    u32 opcode = arr[i];
+    for (u32 subop = 0; subop < 1024; ++subop)
+    {
+      toc.fallback_table[64 + i * 1024 + subop] =
+          PPCTables::GetInterpreterOp((opcode << 26) | (subop << 1));
+    }
+  }
+  toc.check_exceptions = PowerPC::CheckExceptions;
+  toc.check_external_exceptions = PowerPC::CheckExternalExceptions;
+  current_toc = &toc;
 }
 
-u32 JitTieredPPC64::LookupBlock(u32 key, u32 address)
+JitTieredGeneric::DispatchCacheEntry* JitTieredPPC64::LookupBlock(DispatchCacheEntry* entry,
+                                                                  u32 address)
 {
-  JitTieredCommon::LookupBlock(key, address);
-  if ((disp_cache[key].address & FLAG_MASK) != 0)
+  JitTieredCommon::LookupBlock(entry, address);
+  if (entry->executor != interpreter_executor)
   {
     asm volatile("isync");
   }
-  return key;
+  return entry;
+}
+
+void JitTieredPPC64::ReclaimCell(u32 cell)
+{
+  auto cell_start = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(CODESPACE_CELL_SIZE * cell));
+  auto cell_end =
+      reinterpret_cast<Executor>(codespace.GetPtrAtIndex(CODESPACE_CELL_SIZE * (cell + 1)));
+  WARN_LOG(DYNA_REC, "reclaiming Baseline code space cell %u", cell);
+  std::unique_lock lock(block_db_mutex);
+  auto iter = jit_block_db.cbegin();
+  while (iter != jit_block_db.cend())
+  {
+    auto executor = iter->second.executor;
+    if (executor >= cell_start && executor < cell_end)
+    {
+      iter = jit_block_db.erase(iter);
+    }
+    else
+    {
+      ++iter;
+    }
+  }
+  lock.unlock();
+  // we can drop the lock here, because JitTieredCommon::FindBlock acquires its lock on the
+  // dispatch cache while holding the lock on the block DB (see also there)
+  lock = std::unique_lock(disp_cache_mutex);
+
+  for (auto& disp_entry : dispatch_cache)
+  {
+    if (disp_entry.executor < cell_end && disp_entry.executor >= cell_start)
+    {
+      disp_entry.Invalidate();
+    }
+  }
 }
 
 void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
 {
   PPC64BaselineCompiler compiler;
-  std::vector<u32> instructions;
+  std::vector<UGeckoInstruction> instructions;
   for (const DecodedInstruction& inst : block.instructions)
   {
-    instructions.push_back(inst.inst);
+    instructions.push_back(UGeckoInstruction(inst.inst));
   }
-  compiler.compile(instructions);
-  u32 len = block.instructions.size();
-  if (len > CODESPACE_CELL_SIZE - entry_length)
+  compiler.Compile(address, instructions);
+  const u32 len = block.instructions.size();
+  if (len > CODESPACE_CELL_SIZE)
   {
-    WARN_LOG(DYNA_REC, "Huge block (%u instructions) detected. Refusing to write to code space.",
-             len);
+    WARN_LOG(DYNA_REC, "Huge block (%u instructions) compiled. Refusing to emit.", len);
     return;
   }
-  u32 current_offset = u32(codespace.GetOffset());
-  const u32 current_cell = current_offset / CODESPACE_CELL_SIZE;
-  const u32 next_cell = ((current_offset + len + 1) / CODESPACE_CELL_SIZE) % CODESPACE_CELLS;
-  if (current_cell != next_cell)
+  if (len > CODESPACE_CELL_SIZE - offset_in_cell)
   {
-    u32 cell_end;
-    if (next_cell == 0)
-    {
-      current_offset = entry_length;
-      cell_end = CODESPACE_CELL_SIZE;
-    }
-    else
-    {
-      current_offset = next_cell * CODESPACE_CELL_SIZE;
-      cell_end = current_offset + CODESPACE_CELL_SIZE;
-    }
-    WARN_LOG(DYNA_REC, "reclaiming Baseline code space cell %u (%x – %x)", next_cell,
-             current_offset, cell_end);
-    std::unique_lock lock(block_db_mutex);
-    auto iter = jit_block_db.cbegin();
-    while (iter != jit_block_db.cend())
-    {
-      u32 block_offset = iter->second.offset;
-      if (!iter->second.instructions.empty() && block_offset >= current_offset &&
-          block_offset < cell_end)
-      {
-        iter = jit_block_db.erase(iter);
-      }
-      else
-      {
-        ++iter;
-      }
-    }
-    lock.unlock();
-    // we can drop the lock here, because JitTieredCommon::FindBlock acquires its lock on the
-    // dispatch cache while holding the lock on the block DB (see also there)
-    lock = std::unique_lock(disp_cache_mutex);
-
-    for (auto& disp_entry : disp_cache)
-    {
-      if ((disp_entry.address & FLAG_MASK) == 1 && disp_entry.offset >= current_offset &&
-          disp_entry.offset < cell_end)
-      {
-        disp_entry.address = 0;
-      }
-    }
-    codespace.SetOffset(current_offset);
+    current_cell = (current_cell + 1) % CODESPACE_CELLS;
+    ReclaimCell(current_cell);
+    codespace.SetOffset(current_cell * CODESPACE_CELL_SIZE);
+    offset_in_cell = 0;
   }
   codespace.Emit(compiler.instructions);
+  current_offset = CODESPACE_CELL_SIZE * current_cell + offset_in_cell;
   block.offset = current_offset;
+  block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset));
+  offset_in_cell += len;
+  INFO_LOG(DYNA_REC, "created executable code at 0x%016" PRIu64 " (offset %u, size %zu)",
+           u64(block.executor), current_offset, compiler.instructions.size());
   std::unique_lock lock(block_db_mutex);
   jit_block_db.emplace(address, block);
 }

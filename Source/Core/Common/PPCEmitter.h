@@ -9,85 +9,122 @@
 #include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
 
-namespace PPCGen
-{
-enum GPR
-{
-  R0 = 0,
-  R1 = 1,
-  R2 = 2,
-  R3 = 3,
-  R4 = 4,
-  R5 = 5,
-  R6 = 6,
-  R7 = 7,
-  R8 = 8,
-  R9 = 9,
-  R10 = 10,
-  R11 = 11,
-  R12 = 12,
-  R13 = 13,
-  R14 = 14,
-  R15 = 15,
-  R16 = 16,
-  R17 = 17,
-  R18 = 18,
-  R19 = 19,
-  R20 = 20,
-  R21 = 21,
-  R22 = 22,
-  R23 = 23,
-  R24 = 24,
-  R25 = 25,
-  R26 = 26,
-  R27 = 27,
-  R28 = 28,
-  R29 = 29,
-  R30 = 30,
-  R31 = 31
-};
-
-enum SPR
-{
-  XER = 1,
-  LR = 8,
-  CTR = 9
-}
-
-/// constants for the BO field in conditional branches
-/// hint bits are ignored here
-enum BranchMode
-{
-  BRANCH_ALWAYS = 20,
-  BRANCH_TRUE = 12,
-  BRANCH_FALSE = 4,
-  BRANCH_DEC_ZERO = 16,
-  BRANCH_DEC_NZ = 18,
-  BRANCH_DEC_ZERO_TRUE = 10,
-  BRANCH_DEC_NZ_TRUE = 8,
-  BRANCH_DEC_ZERO_FALSE = 2,
-  BRANCH_DEC_NZ_FALSE = 0,
-}
-
-/// hints for bclr and bcctr
-enum BranchHint
-{
-  HINT_RETURN = 0,
-  HINT_LR_PREDICTABLE = 1,
-  HINT_CTR_PREDICTABLE = 0,
-  HINT_UNPREDICTABLE = 3
-}
-
-enum LSUpdate
-{
-  NO_UPDATE = 0,
-  UPDATE = 1
-}
-
 class PPCEmitter
 {
 public:
   using FixupBranch = size_t;
+
+  enum GPR
+  {
+    R0 = 0,
+    R1 = 1,
+    R2 = 2,
+    R3 = 3,
+    R4 = 4,
+    R5 = 5,
+    R6 = 6,
+    R7 = 7,
+    R8 = 8,
+    R9 = 9,
+    R10 = 10,
+    R11 = 11,
+    R12 = 12,
+    R13 = 13,
+    R14 = 14,
+    R15 = 15,
+    R16 = 16,
+    R17 = 17,
+    R18 = 18,
+    R19 = 19,
+    R20 = 20,
+    R21 = 21,
+    R22 = 22,
+    R23 = 23,
+    R24 = 24,
+    R25 = 25,
+    R26 = 26,
+    R27 = 27,
+    R28 = 28,
+    R29 = 29,
+    R30 = 30,
+    R31 = 31
+  };
+
+  enum SPR
+  {
+    SPR_XER = 1,
+    SPR_LR = 8,
+    SPR_CTR = 9
+  };
+
+  /// CRF values are always left-aligned in their 5-bit instruction field,
+  /// and this lets us express CRB values as u32(CRx) + u32(EQ) for example
+  enum CRF
+  {
+    CR0 = 0,
+    CR1 = 4,
+    CR2 = 8,
+    CR3 = 12,
+    CR4 = 16,
+    CR5 = 20,
+    CR6 = 24,
+    CR7 = 28
+  };
+
+  /// within each field
+  enum CRB
+  {
+    LT = 0,
+    GT = 1,
+    EQ = 2,
+    SO = 3
+  };
+
+  /// constants for the BO field in conditional branches
+  /// hint bits are ignored here
+  enum BranchMode
+  {
+    BR_ALWAYS = 20,
+    BR_TRUE = 12,
+    BR_FALSE = 4,
+    BR_DEC_ZERO = 16,
+    BR_DEC_NZ = 18,
+    BR_DEC_ZERO_TRUE = 10,
+    BR_DEC_NZ_TRUE = 8,
+    BR_DEC_ZERO_FALSE = 2,
+    BR_DEC_NZ_FALSE = 0,
+  };
+
+  /// hints for bclr and bcctr
+  enum BranchHint
+  {
+    HINT_RETURN = 0,
+    HINT_LR_PREDICTABLE = 1,
+    HINT_CTR_PREDICTABLE = 0,
+    HINT_UNPREDICTABLE = 3
+  };
+
+  enum LSUpdate
+  {
+    NO_UPDATE = 0,
+    UPDATE = 1
+  };
+
+  enum TrapCondition
+  {
+    TRAP_ALWAYS = 31,
+    TRAP_LT = 16,
+    TRAP_GT = 8,
+    TRAP_EQ = 4,
+    TRAP_ULT = 2,
+    TRAP_UGT = 1
+  };
+
+  enum CompareSize
+  {
+    CMP_WORD = 0,
+    CMP_DWORD = 1
+  };
 
   void DFormInstruction(u32 opcode, GPR r1, GPR r2, u16 imm)
   {
@@ -105,15 +142,16 @@ public:
   // do not call on register 0 (use LoadSignedImmediate instead, for clarity)
   void ADDIS(GPR rt, GPR rs, s16 imm) { DFormInstructionSigned(15, rt, rs, imm); }
 
-  void ORI(GPR rt, GPR rs, u16 imm) { DFormInstruction(24, rt, rs, imm) }
-  void ORIS(GPR rt, GPR rs, u16 imm) { DFormInstruction(24, rt, rs, imm) }
+  void ORI(GPR rt, GPR rs, u16 imm) { DFormInstruction(24, rt, rs, imm); }
+  void ORIS(GPR rt, GPR rs, u16 imm) { DFormInstruction(24, rt, rs, imm); }
 
-  void XORI(GPR rt, GPR rs, u16 imm) { DFormInstruction(26, rt, rs, imm) }
-  void XORIS(GPR rt, GPR rs, u16 imm) { DFormInstruction(27, rt, rs, imm) }
+  void XORI(GPR rt, GPR rs, u16 imm) { DFormInstruction(26, rt, rs, imm); }
+  void XORIS(GPR rt, GPR rs, u16 imm) { DFormInstruction(27, rt, rs, imm); }
 
-  void ANDI_Rc(GPR rt, GPR rs, u16 imm) { DFormInstruction(28, rt, rs, imm) }
-  void ANDIS_Rc(GPR rt, GPR rs, u16 imm) { DFormInstruction(29, rt, rs, imm) }
+  void ANDI_Rc(GPR rt, GPR rs, u16 imm) { DFormInstruction(28, rt, rs, imm); }
+  void ANDIS_Rc(GPR rt, GPR rs, u16 imm) { DFormInstruction(29, rt, rs, imm); }
 
+  void MoveReg(GPR rt, GPR rs) { ADDI(rt, rs, 0); }
   void LoadSignedImmediate(GPR rt, s32 imm)
   {
     if (imm <= 0x7fff && imm >= -0x8000)
@@ -130,10 +168,36 @@ public:
     {
       // use the 'performance-optimized instruction sequence' as per the spec
       // (even though most implementations, e. g. POWER9, don't do fusing)
-      u16 lower_half = static_cast<u16>((imm < 0 ? -imm : imm) & 0xffff);
+      u16 lower_half = u16(Common::BitCast<u32>(imm) & 0xffff);
       ADDIS(rt, R0, static_cast<s16>(imm / (1 << 16)));
       ORI(rt, R0, lower_half);
     }
+  }
+  void LoadUnsignedImmediate(GPR rt, u32 imm)
+  {
+    if (imm < 0x7fffffff)
+    {
+      LoadSignedImmediate(rt, s32(imm));
+    }
+    else if (!(imm & 0x8000))
+    {
+      LoadSignedImmediate(rt, s16(imm & 0x7fff));
+      ORIS(rt, rt, u16(imm >> 16));
+    }
+    else
+    {
+      LoadSignedImmediate(rt, 0);
+      // use the 'performance-optimized instruction sequence' as per the spec
+      // (even though most implementations, e. g. POWER9, don't do fusing)
+      ORIS(rt, rt, u16(imm >> 16));
+      ORI(rt, rt, u16(imm & 0xffff));
+    }
+  }
+
+  // === compare ===
+  void CMPLI(CRF bf, CompareSize l, GPR ra, u16 imm)
+  {
+    DFormInstruction(10, static_cast<GPR>(bf + l), ra, imm);
   }
 
   // === ≤32-bit load/store ===
@@ -150,23 +214,30 @@ public:
   // crb < 32 obviously
   void BC(BranchMode bo, u32 crb, s16 addr, bool link = false, bool absolute = false)
   {
-    instructions.push_back((16u << 26) | (u32(bo) << 21) | ((crb & 31) << 16) | u32(Common::BitCast<u16>(addr) | (u32(absolute) << 1) | u32(link));
+    instructions.push_back((16u << 26) | (u32(bo) << 21) | ((crb & 31) << 16) |
+                           u32(Common::BitCast<u16>(addr)) | (u32(absolute) << 1) | u32(link));
   }
-  void BCLR(BranchMode bo = BRANCH_ALWAYS, u32 crb = 0, BranchHint hint = HINT_RETURN,
+  void BCLR(BranchMode bo = BR_ALWAYS, u32 crb = 0, BranchHint hint = HINT_RETURN,
             bool link = false)
   {
-    instructions.push_back((16u << 26) | (static_cast<u32>(bo) << 21) | ((crb & 31) << 16) |
+    instructions.push_back((19u << 26) | (static_cast<u32>(bo) << 21) | ((crb & 31) << 16) |
                            static_cast<u32>(hint) << 11 | (16u << 1) | static_cast<u32>(link));
   }
-  void BCCTR(BranchMode bo, u32 crb, BranchHint hint = HINT_CTR_PREDICTABLE, bool link = false)
+  void BCCTR(BranchMode bo = BR_ALWAYS, u32 crb = 0, BranchHint hint = HINT_CTR_PREDICTABLE,
+             bool link = true)
   {
-    instructions.push_back((16u << 26) | (u32(bo) << 21) | ((crb & 31) << 16) | u32(hint) << 11 |
+    instructions.push_back((19u << 26) | (u32(bo) << 21) | ((crb & 31) << 16) | u32(hint) << 11 |
                            (528u << 1) | u32(link));
   }
 
   FixupBranch ConditionalBranch(BranchMode bo, u32 crb)
   {
     instructions.push_back((16u << 26) | (static_cast<u32>(bo) << 21) | ((crb & 31) << 16));
+    return instructions.size() - 1;
+  }
+  FixupBranch Jump()
+  {
+    instructions.push_back(18u << 26);
     return instructions.size() - 1;
   }
   void SetBranchTarget(FixupBranch branch)
@@ -186,11 +257,24 @@ public:
   // the order of the two 5-bit halves of the spr field is reversed in the encoding
   void MTSPR(SPR spr, GPR rs)
   {
-    instructions.push_back((31u << 26) | (static_cast<u32>(rs) << 21) | ((static_cast<u32>(spr) & 31) << 16) | ((static_cast<u32>(spr) & 0x3e0) << 6) | (467u << 1);
+    instructions.push_back((31u << 26) | (u32(rs) << 21) | ((u32(spr) & 31) << 16) |
+                           ((u32(spr) & 0x3e0) << 6) | (467u << 1));
   }
   void MFSPR(GPR rt, SPR spr)
   {
-    instructions.push_back((31u << 26) | (static_cast<u32>(rs) << 21) | ((static_cast<u32>(spr) & 31) << 16) | ((static_cast<u32>(spr) & 0x3e0) << 6) | (339u << 1);
+    instructions.push_back((31u << 26) | (u32(rt) << 21) | ((u32(spr) & 31) << 16) |
+                           ((u32(spr) & 0x3e0) << 6) | (339u << 1));
+  }
+
+  // === misc ===
+  void TW(TrapCondition to = TRAP_ALWAYS, GPR ra = R0, GPR rb = R0)
+  {
+    instructions.push_back((31u << 26) | (u32(to) << 21) | (u32(ra) << 16) | (u32(rb) << 11) |
+                           (4u << 1));
+  }
+  void TWI(TrapCondition to, GPR ra, s16 imm)
+  {
+    DFormInstructionSigned(3, static_cast<GPR>(to), ra, imm);
   }
 
   // === 64-bit instructions ===
@@ -208,4 +292,3 @@ public:
 
   std::vector<u32> instructions;
 };
-}

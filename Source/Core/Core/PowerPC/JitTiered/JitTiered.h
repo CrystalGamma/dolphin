@@ -20,6 +20,12 @@
 class JitTieredGeneric : public JitBase
 {
 public:
+  enum ExecutorFlags : u32
+  {
+    BLOCK_OVERRUN = 1,
+    REPORT_IMMEDIATELY = 2,
+  };
+
   virtual const char* GetName() const { return "TieredGeneric"; }
   virtual void Init() {}
   virtual void ClearCache() final;
@@ -44,18 +50,15 @@ public:
   virtual void GetProfileResults(Profiler::ProfileStats* prof_stats) {}
   virtual void CompileExceptionCheck(JitInterface::ExceptionType) {}
 
+  static constexpr u32 EXCEPTION_SYNC =
+      ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
+
 protected:
   // for invalidation of JIT blocks
   using Bloom = u64;
   using Executor = u32 (*)(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
                            void* toc);
   using InterpreterFunc = void (*)(UGeckoInstruction);
-
-  enum ExecutorFlags : u32
-  {
-    BLOCK_OVERRUN = 1,
-    REPORT_IMMEDIATELY = 2,
-  };
 
   struct DispatchCacheEntry
   {
@@ -150,9 +153,6 @@ protected:
   /// tail-called by FindBlock if it doesn't find a block in the dispatch cache.
   /// the default implementation just creates a new interpreter block.
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry* entry, u32 address);
-
-  static constexpr u32 EXCEPTION_SYNC =
-      ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
 
   static constexpr int DISP_CACHE_SHIFT = 9;
   static constexpr size_t DISP_PRIMARY_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;

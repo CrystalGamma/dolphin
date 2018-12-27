@@ -32,6 +32,7 @@ enum class CPUCore
   CachedInterpreter = 5,
   TieredGeneric = 6,
   TieredDummy = 7,
+  TieredPPC64 = 8,
 };
 
 // For reading from and writing to our config.

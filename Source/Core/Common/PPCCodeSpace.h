@@ -8,12 +8,9 @@
 
 #include "Common/CodeBlock.h"
 
-namespace PPCGen
-{
 class NativeEndianEmitter
 {
 public:
-  NativeEndianEmitter();
   void Emit(const std::vector<u32>& instructions);
   /// flushes the specified range from dcache and issues invalidations for icache
   /// this needs to be called from the writing thread
@@ -30,7 +27,17 @@ private:
 
 class PPCCodeSpace : public Common::CodeBlock<NativeEndianEmitter>
 {
+public:
+  u32* GetPtrAtIndex(size_t index) { return reinterpret_cast<u32*>(region) + index; }
+  void SetOffset(size_t index) { SetCodePtr(region + 4 * index); }
+
 private:
-  virtual void PoisonMemory() {}
+  virtual void PoisonMemory()
+  {
+    for (u32 *ptr = reinterpret_cast<u32*>(region), *end = ptr + (region_size / 4); ptr != end;
+         ++ptr)
+    {
+      *ptr = 0x7fe00008;
+    }
+  }
 };
-}
