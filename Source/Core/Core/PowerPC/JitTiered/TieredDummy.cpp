@@ -9,16 +9,17 @@
 #include "Common/Logging/Log.h"
 #include "Core/PowerPC/PPCTables.h"
 
-u32 JitTieredDummy::EnterBaselineBlock(JitTieredCommon* self, u32 offset,
-                                       PowerPC::PowerPCState* ppcState, void*)
+// does basically the same as JitTieredGeneric::InterpreterExecutor
+u32 JitTieredDummy::Executor(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
+                             void*)
 {
   JitTieredDummy* xself = static_cast<JitTieredDummy*>(self);
   // INFO_LOG(DYNA_REC, "running @ %08x", block.address);
   const DecodedInstruction* inst = &xself->baseline_codespace[offset];
-  do
+  for (; inst->func; ++inst)
   {
     ppcState->npc = ppcState->pc + 4;
-    if (inst->uses_fpu && !ppcState->msr.FP)
+    if ((inst->flags & USES_FPU) && !ppcState->msr.FP)
     {
       ppcState->Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
     }
@@ -40,14 +41,14 @@ u32 JitTieredDummy::EnterBaselineBlock(JitTieredCommon* self, u32 offset,
       ppcState->downcount -= inst->cycles;
       return 0;
     }
-  } while ((++inst)->cycles != 0);
+  }
+  ppcState->downcount -= (inst - 1)->cycles;
   return BLOCK_OVERRUN;
 }
 
 void JitTieredDummy::Init()
 {
   JitTieredCommon::Init();
-  enter_baseline_block = EnterBaselineBlock;
   on_thread_baseline = false;
 }
 
@@ -55,7 +56,7 @@ void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
 {
   INFO_LOG(DYNA_REC, "'compiling' block @ %08x", address);
   u32 len = block.instructions.size();
-  if (len > CODESPACE_CELL_SIZE)
+  if (len >= CODESPACE_CELL_SIZE)
   {
     WARN_LOG(DYNA_REC, "Huge block (%u instructions) detected. Refusing to 'compile'.", len);
     return;
@@ -87,12 +88,12 @@ void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
     // dispatch cache while holding the lock on the block DB (see also there)
     lock = std::unique_lock(disp_cache_mutex);
 
-    for (auto& disp_entry : disp_cache)
+    for (auto& disp_entry : dispatch_cache)
     {
-      if ((disp_entry.address & FLAG_MASK) == 1 && disp_entry.offset >= current_offset &&
+      if (disp_entry.executor == Executor && disp_entry.offset >= current_offset &&
           disp_entry.offset < current_offset + CODESPACE_CELL_SIZE)
       {
-        disp_entry.address = 0;
+        disp_entry.Invalidate();
       }
     }
   }
@@ -100,9 +101,10 @@ void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
   {
     baseline_codespace[current_offset + i] = block.instructions[i];
   }
-  baseline_codespace[current_offset + len] = DecodedInstruction{nullptr, 0, 0};
+  baseline_codespace[current_offset + len] = {};
   std::unique_lock lock(block_db_mutex);
   block.offset = current_offset;
+  block.executor = Executor;
   jit_block_db.emplace(address, block);
   current_offset += len + 1;
 }

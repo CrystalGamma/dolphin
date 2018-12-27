@@ -191,8 +191,9 @@ protected:
   struct JitBlock
   {
     Bloom bloom;
+    Executor executor;
+    u64 runcount;
     u32 offset;
-    u32 runcount;
     std::vector<DecodedInstruction> instructions;
   };
   struct ReportedBlock
@@ -203,8 +204,8 @@ protected:
   };
 
   void CPUDoReport(bool wait, bool hint);
-  bool OverrunBaseline(u32 start_addr, u32 key);
-  virtual u32 LookupBlock(u32 key, u32 address);
+  bool HandleJitOverrun(u32 start_addr, DispatchCacheEntry*);
+  virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
@@ -213,9 +214,6 @@ protected:
 
   static constexpr u32 BASELINE_THRESHOLD = 16;
   static constexpr u32 REPORT_THRESHOLD = 128;
-  // flags in the return value of the entry functions
-  static constexpr u32 REPORT_IMMEDIATELY = 1;
-  static constexpr u32 BLOCK_OVERRUN = 2;
   /// FIXME
   static constexpr size_t CACHELINE = 128;
 

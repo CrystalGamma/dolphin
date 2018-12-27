@@ -13,8 +13,7 @@ public:
   virtual const char* GetName() const { return "Tiered Dummy"; }
   virtual void BaselineCompile(u32 address, JitBlock&& block);
 
-  static u32 EnterBaselineBlock(JitTieredCommon* self, u32 offset, PowerPC::PowerPCState* ppcState,
-                                void*);
+  static u32 Executor(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState, void*);
 
   static constexpr u32 CODESPACE_CELL_SIZE = 1 << 12;
   static constexpr u32 CODESPACE_CELLS = 4;

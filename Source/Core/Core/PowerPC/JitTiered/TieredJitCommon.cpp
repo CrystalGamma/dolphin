@@ -4,6 +4,7 @@
 
 #include "Core/PowerPC/JitTiered/JitTiered.h"
 
+#include <cinttypes>
 #include <thread>
 #include <utility>
 
@@ -77,7 +78,6 @@ void JitTieredCommon::Run()
     });
   }
   cpu_thread_lock = std::unique_lock(disp_cache_mutex);
-  // File::IOFile f("dumpjit", "a");
   while (*state == CPU::State::Running)
   {
     // advancing the time might block (e. g. on the GPU)
@@ -87,75 +87,47 @@ void JitTieredCommon::Run()
 
     CoreTiming::Advance();
 
-    // block overrun is a little annoying in the JIT. to be deterministic,
-    // we have to act as if the block never ended (not advance the time, not return from Run())
-    bool overrun = false;
     do
     {
-      // DumpState(f);
-      RunZeroInstruction();
       const u32 start_addr = PC;
-      const u32 key = FindBlock(start_addr);
-      DispCacheEntry& cache_entry = disp_cache.at(key);
-      const u32 flags = cache_entry.address & FLAG_MASK;
-      if (flags <= 1)
+      DispatchCacheEntry* cache_entry = FindBlock(start_addr);
+      const u32 usecount = cache_entry->usecount + 1;
+      cache_entry->usecount = usecount;
+      const u32 flags =
+          cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
+      // block overrun is a little annoying in the JIT. to be deterministic,
+      // we have to act as if the block never ended (not advance the time, not return from Run())
+      bool overrun = false;
+      if (flags & BLOCK_OVERRUN)
       {
         // interpreter and Baseline blocks use a run-loop-driven execution counter
-        u32 usecount = cache_entry.usecount + 1;
-        cache_entry.usecount = usecount;
-        if (flags == 0)
+        if (cache_entry->executor == interpreter_executor)
         {
-          // INFO_LOG(DYNA_REC, "entering Interpreter @ %08x", start_addr);
-          overrun = InterpretBlock(key);
-          if (overrun)
+          if (cache_entry->offset < offset_new)
           {
-            if (cache_entry.offset < offset_new)
-            {
-              // we have already reported this block: invalidate the Baseline block
-              INFO_LOG(DYNA_REC, "extending reported interpreter block @ %08x", start_addr);
-              next_report.invalidations.push_back({start_addr, start_addr});
-              next_report.invalidation_bloom |= BloomRange(start_addr, start_addr);
-            }
-            ReadInstructions(key);
-            overrun = false;
+            // we have already reported this block: invalidate the Baseline block
+            INFO_LOG(DYNA_REC, "extending reported interpreter block @ %08x", start_addr);
+            next_report.invalidations.push_back({start_addr, start_addr});
+            next_report.invalidation_bloom |= BloomRange(start_addr, start_addr);
           }
-          if (usecount >= REPORT_THRESHOLD)
-          {
-            // INFO_LOG(DYNA_REC, "block %08x reached threshold", start_addr);
-            CPUDoReport(false, true);
-          }
+          ReadInstructions(cache_entry);
         }
         else
         {
-          // INFO_LOG(DYNA_REC, "entering Baseline @ %08x (offset %x)", start_addr,
-          // cache_entry.offset);
-          u32 res = enter_baseline_block(this, cache_entry.offset, &PowerPC::ppcState, nullptr);
-          if (res & REPORT_IMMEDIATELY)
-          {
-            CPUDoReport(true, true);
-          }
-          overrun = res & BLOCK_OVERRUN;
-          if (overrun)
-          {
-            overrun = OverrunBaseline(start_addr, key);
-          }
+          overrun = HandleJitOverrun(start_addr, cache_entry);
         }
       }
-      else
+      if (usecount >= REPORT_THRESHOLD || flags & REPORT_IMMEDIATELY)
       {
-        ERROR_LOG(DYNA_REC, "entering Optimized @ %08x", start_addr);
-        u32 res = enter_optimized_block(this, cache_entry.offset, &PowerPC::ppcState);
-        if (res & REPORT_IMMEDIATELY)
-        {
-          CPUDoReport(true, true);
-        }
-        overrun = res & BLOCK_OVERRUN;
+        CPUDoReport(flags & REPORT_IMMEDIATELY, true);
       }
       if (overrun)
       {
         INFO_LOG(DYNA_REC, "overrun @ %08x", start_addr);
+        // don't check the loop condition
+        continue;
       }
-    } while (overrun || (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running));
+    } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
   cpu_thread_lock.unlock();
 
@@ -173,7 +145,7 @@ void JitTieredCommon::Run()
   }
 }
 
-bool JitTieredCommon::OverrunBaseline(u32 start_addr, u32 key)
+bool JitTieredCommon::HandleJitOverrun(u32 start_addr, DispatchCacheEntry* cache_entry)
 {
   INFO_LOG(DYNA_REC, "baseline block overrun @ %08x", start_addr);
   cpu_thread_lock.unlock();
@@ -187,42 +159,39 @@ bool JitTieredCommon::OverrunBaseline(u32 start_addr, u32 key)
   if (find_result != jit_block_db.end())
   {
     const std::vector<DecodedInstruction>& instructions = find_result->second.instructions;
-    if (!instructions.empty())
+    next_report.instructions.push_back({});
+    len = instructions.size();
+    for (const DecodedInstruction& inst : instructions)
     {
-      for (const DecodedInstruction& inst : instructions)
-      {
-        next_report.instructions.push_back(inst);
-        len += 1;
-      }
+      next_report.instructions.push_back(inst);
     }
   }
 
   std::unique_lock disp_lock(disp_cache_mutex);
-
-  bool resolved = false;
+  cpu_thread_lock = std::move(disp_lock);
 
   // Baseline may have invalidated that entry while we were looking up the block,
   // but we are replacing it with an interpreter block anyway
-  DispCacheEntry& cache_entry = disp_cache.at(key);
   if (len)
   {
-    cache_entry.address = start_addr;
-    cache_entry.offset = offset;
-    cache_entry.len = len;
+    // address is already correct
+    cache_entry->offset = offset + 1;
+    cache_entry->length = len;
+    cache_entry->executor = interpreter_executor;
+    // bloom is already correct
     // leave usecount untouched
-    cpu_thread_lock = std::move(disp_lock);
-    ReadInstructions(key);
-    resolved = true;
+    ReadInstructions(cache_entry);
+    return false;
   }
   else
   {
-    cache_entry.address = 0;
-    cpu_thread_lock = std::move(disp_lock);
+    cache_entry->Invalidate();
+    return true;
   }
-  return !resolved;
 }
 
-u32 JitTieredCommon::LookupBlock(u32 key, u32 address)
+JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCacheEntry* cache_entry,
+                                                                   u32 address)
 {
   // unlocks the dispatch cache mutex, allowing JIT threads trying to reclaim code space to delete
   // entries our free slot in primary cache will still be free when we come back, because JIT
@@ -237,36 +206,27 @@ u32 JitTieredCommon::LookupBlock(u32 key, u32 address)
   {
     cpu_thread_lock = std::unique_lock(disp_cache_mutex);
 
-    return JitTieredGeneric::LookupBlock(key, address);
+    return JitTieredGeneric::LookupBlock(cache_entry, address);
   }
   else
   {
     JitBlock& block = find_result->second;
-    DispCacheEntry entry;
+    DispatchCacheEntry entry;
     entry.address = address;
     entry.offset = block.offset;
-    if (block.instructions.empty())
-    {
-      // block is optimized
-      entry.address |= 2;
-      entry.bloom = block.bloom;
-    }
-    else
-    {
-      // block is Baseline-compiled
-      INFO_LOG(DYNA_REC, "found Baseline block @ %08x (offset %x)", address, entry.offset);
-      entry.address |= 1;
-      entry.len = block.instructions.size();
-      entry.usecount = 0;
-    }
+    entry.bloom = block.bloom;
+    entry.executor = block.executor;
+    entry.length = block.instructions.size();
+    entry.usecount = 0;
+    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x)", address, entry.offset);
 
     // if we unlock the block DB before locking, we might be interrupted by the JIT thread
-    // invalidating them for reclamation, keeping wild offsets around
+    // invalidating them for reclamation, keeping wild executor pointers/offsets around
     std::unique_lock disp_lock(disp_cache_mutex);
-
-    disp_cache.at(key) = entry;
     cpu_thread_lock = std::move(disp_lock);
-    return key;
+
+    *cache_entry = entry;
+    return cache_entry;
   }
 }
 
@@ -350,7 +310,8 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
       }
       else
       {
-        INFO_LOG(DYNA_REC, "invalidate JIT block @ %08x (used %u times)", addr, block.runcount);
+        INFO_LOG(DYNA_REC, "invalidate JIT block @ %08x (used %" PRIu64 " times)", addr,
+                 block.runcount);
         block_counters.emplace(addr, block.runcount);
       }
       iter = jit_block_db.erase(iter);
@@ -381,15 +342,10 @@ bool JitTieredCommon::BaselineIteration()
   INFO_LOG(DYNA_REC, "reading report");
 
   std::map<u32, ReportedBlock> reported_blocks;
-  // don't count the sentinel
-  size_t num_new_blocks = baseline_report.blocks.size() - 1;
-  u32 end = baseline_report.blocks[0].start;
-  for (size_t i = 0; i < num_new_blocks; i += 1)
+  for (const DispatchCacheEntry& block : baseline_report.blocks)
   {
-    const CompactedBlock& block = baseline_report.blocks[i];
-    u32 start = end;
-    end = baseline_report.blocks[i + 1].start;
-    const ReportedBlock rb = {start, end - start, block.usecount};
+    const ReportedBlock rb = {
+        block.offset, block.executor == interpreter_executor ? block.length : 0, block.usecount};
     reported_blocks.emplace(block.address, rb);
   }
   baseline_report.blocks.clear();
@@ -402,7 +358,7 @@ bool JitTieredCommon::BaselineIteration()
   {
     const u32 address = pair.first;
     const ReportedBlock& block = pair.second;
-    u32 runcount = block.usecount;
+    u64 runcount = block.usecount;
     auto counter = block_counters.find(address);
     if (counter != block_counters.end())
     {
@@ -433,8 +389,8 @@ bool JitTieredCommon::BaselineIteration()
     {
       insts.push_back(baseline_report.instructions[block.start + i]);
     }
-    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1), current_offset, runcount,
-                   std::move(insts)};
+    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1), nullptr, runcount,
+                   current_offset, std::move(insts)};
     BaselineCompile(address, std::move(jb));
   }
 
