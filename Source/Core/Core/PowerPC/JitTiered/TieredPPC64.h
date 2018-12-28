@@ -14,8 +14,7 @@ public:
   {
     void (*check_exceptions)();
     void (*check_external_exceptions)();
-    u32 (*do_instruction)(UGeckoInstruction);
-    std::array<InterpreterFunc, 4160> fallback_table;
+    std::array<InterpreterFunc, 64 + 4 * 1024 + 32> fallback_table;
   };
   JitTieredPPC64();
   virtual const char* GetName() const { return "TieredPPC64"; }

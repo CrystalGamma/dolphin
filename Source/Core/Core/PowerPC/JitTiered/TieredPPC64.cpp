@@ -10,35 +10,6 @@
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
 
-static u32 DoInstruction(UGeckoInstruction inst)
-{
-  INFO_LOG(DYNA_REC, "%08x", inst.hex);
-  NPC = PC + 4;
-  GekkoOPInfo* info = PPCTables::GetOpInfo(inst);
-  if ((info->flags & FL_USE_FPU) && !MSR.FP)
-  {
-    PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
-  }
-  else
-  {
-    PPCTables::GetInterpreterOp(inst)(inst);
-  }
-  PowerPC::ppcState.downcount -= info->numCycles;
-  if (PowerPC::ppcState.Exceptions & JitTieredGeneric::EXCEPTION_SYNC)
-  {
-    PowerPC::CheckExceptions();
-    PowerPC::ppcState.Exceptions &= ~JitTieredGeneric::EXCEPTION_SYNC;
-    return 0;
-  }
-  PC += 4;
-  if (NPC != PC)
-  {
-    PC = NPC;
-    return 0;
-  }
-  return JitTieredGeneric::BLOCK_OVERRUN;
-}
-
 JitTieredPPC64::JitTieredPPC64()
 {
   codespace.AllocCodeSpace(CODESPACE_CELL_SIZE * CODESPACE_CELLS * 4);
@@ -56,9 +27,13 @@ JitTieredPPC64::JitTieredPPC64()
           PPCTables::GetInterpreterOp((opcode << 26) | (subop << 1));
     }
   }
+  for (u32 subop = 0; subop < 32; ++subop)
+  {
+    toc.fallback_table[64 + 4 * 1024 + subop] =
+        PPCTables::GetInterpreterOp((59u << 26) | (subop << 1));
+  }
   toc.check_exceptions = PowerPC::CheckExceptions;
   toc.check_external_exceptions = PowerPC::CheckExternalExceptions;
-  toc.do_instruction = DoInstruction;
   current_toc = next_toc = &toc;
 }
 
