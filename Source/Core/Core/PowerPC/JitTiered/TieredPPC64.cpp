@@ -35,6 +35,7 @@ JitTieredPPC64::JitTieredPPC64()
   toc.check_exceptions = PowerPC::CheckExceptions;
   toc.check_external_exceptions = PowerPC::CheckExternalExceptions;
   current_toc = next_toc = &toc;
+  on_thread_baseline = false;
 }
 
 JitTieredGeneric::DispatchCacheEntry* JitTieredPPC64::LookupBlock(DispatchCacheEntry* entry,
