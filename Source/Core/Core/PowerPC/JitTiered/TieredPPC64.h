@@ -26,7 +26,7 @@ protected:
 private:
   void ReclaimCell(u32);
   static constexpr u32 CODESPACE_CELL_SIZE = 1 << 13;
-  static constexpr u32 CODESPACE_CELLS = 8;
+  static constexpr u32 CODESPACE_CELLS = 1 << 8;
 
   u32 offset_in_cell = 0;
   u32 current_cell = 0;
