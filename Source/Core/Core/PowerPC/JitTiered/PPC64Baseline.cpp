@@ -114,6 +114,33 @@ void PPC64BaselineCompiler::Compile(u32 address,
       MULLI(SCRATCH1, SCRATCH1, inst.SIMM_16);
       STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
     }
+    else if (inst.OPCD == 20 || inst.OPCD == 21)
+    {
+      // rlwimix, rlwinmx
+      if (inst.OPCD == 20)
+      {
+        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+        LWZ(SCRATCH2, PPCSTATE, GPROffset(inst.RD));
+      }
+      else
+      {
+        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+      }
+      // replace the registers with our own, clear Rc and leave the rest as is
+      this->instructions.push_back((inst.hex & 0xfc00fffe) |
+                                   (u32(inst.OPCD == 20 ? SCRATCH2 : SCRATCH1) << 21) |
+                                   (u32(SCRATCH1) << 16));
+      if (inst.Rc)
+      {
+        EXTSW(SCRATCH1, SCRATCH1);
+        // FIXME: implement SO emulation?
+        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      }
+      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+      LWZ(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
+      ADDI(SCRATCH1, SCRATCH1, -s16(opinfo->numCycles));
+      STW(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
+    }
     else
     {
       // interpreter fallback
