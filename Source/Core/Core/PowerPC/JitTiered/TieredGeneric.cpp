@@ -11,9 +11,6 @@
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 
-static constexpr u32 EXCEPTION_SYNC =
-    ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
-
 void JitTieredGeneric::ClearCache()
 {
   // invalidate dispatch cache
