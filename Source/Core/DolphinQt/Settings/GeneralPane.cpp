@@ -47,6 +47,8 @@ static const std::map<PowerPC::CPUCore, const char*> CPU_CORE_NAMES = {
     {PowerPC::CPUCore::CachedInterpreter, QT_TR_NOOP("Cached Interpreter (slower)")},
     {PowerPC::CPUCore::TieredGeneric,
      QT_TR_NOOP("Generic path of the tiered JIT framework (slow, experimental)")},
+    {PowerPC::CPUCore::TieredNoop, QT_TR_NOOP("Tiered no-op JIT (slow, experimental)")},
+    {PowerPC::CPUCore::TieredDummy, QT_TR_NOOP("Tiered dummy JIT (slow, experimental)")},
     {PowerPC::CPUCore::JIT64, QT_TR_NOOP("JIT Recompiler (recommended)")},
     {PowerPC::CPUCore::JITARM64, QT_TR_NOOP("JIT Arm64 (experimental)")},
 };

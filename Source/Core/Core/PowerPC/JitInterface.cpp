@@ -19,6 +19,8 @@
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitTiered/JitTiered.h"
+#include "Core/PowerPC/JitTiered/TieredDummy.h"
+#include "Core/PowerPC/JitTiered/TieredNoop.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -61,8 +63,14 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
   case PowerPC::CPUCore::CachedInterpreter:
     g_jit = new CachedInterpreter();
     break;
+  case PowerPC::CPUCore::TieredNoop:
+    g_jit = new JitTieredNoop();
+    break;
   case PowerPC::CPUCore::TieredGeneric:
     g_jit = new JitTieredGeneric();
+    break;
+  case PowerPC::CPUCore::TieredDummy:
+    g_jit = new JitTieredDummy();
     break;
 
   default:

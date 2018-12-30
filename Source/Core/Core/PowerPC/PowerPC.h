@@ -31,6 +31,8 @@ enum class CPUCore
   JITARM64 = 4,
   CachedInterpreter = 5,
   TieredGeneric = 6,
+  TieredNoop = 7,
+  TieredDummy = 8,
 };
 
 // For reading from and writing to our config.

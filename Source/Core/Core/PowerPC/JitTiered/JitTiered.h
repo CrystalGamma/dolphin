@@ -5,6 +5,9 @@
 #pragma once
 
 #include <bitset>
+#include <condition_variable>
+#include <map>
+#include <mutex>
 #include <vector>
 
 #include "Core/PowerPC/JitCommon/JitBase.h"
@@ -175,4 +178,85 @@ protected:
 
   /// offset in next_report.instructions at which new instructions begin
   size_t offset_new = 0;
+};
+
+// deadlock prevention:
+// (A < B means never block on A while holding B)
+// report_mutex < block_db_mutex
+// report_mutex < disp_cache_mutex
+// only the CPU thread may lock block_db_mutex and disp_cache_mutex at the same time
+class JitTieredCommon : public JitTieredGeneric
+{
+public:
+  virtual void Run() final;
+
+protected:
+  struct JitBlock
+  {
+    Bloom bloom;
+    Executor executor;
+    u64 runcount;
+    u32 offset;
+    std::vector<DecodedInstruction> instructions;
+  };
+  struct ReportedBlock
+  {
+    u32 start;
+    u32 len;
+    u32 usecount;
+  };
+
+  void CPUDoReport(bool wait, bool hint);
+  bool HandleJitOverrun(u32 start_addr, DispatchCacheEntry*);
+  virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
+
+  bool BaselineIteration();
+  void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
+                     std::map<u32, ReportedBlock>* reported_blocks);
+  virtual void BaselineCompile(u32 address, JitBlock&& block) = 0;
+
+  static constexpr u32 BASELINE_THRESHOLD = 16;
+  static constexpr u32 REPORT_THRESHOLD = 128;
+  /// FIXME
+  static constexpr size_t CACHELINE = 128;
+
+  // === CPU thread data ===
+  /// bloom filter for invalidations that have been reported to Baseline in the last report
+  /// (after the next report we can be sure Baseline has processed the invalidations
+  /// and don't need to consider this filter anymore)
+  Bloom old_bloom = BloomNone();
+
+  void* current_toc = nullptr;
+
+  /// whether to run the Baseline JIT on the CPU thread
+  /// (override with false in subclasses, except for debugging)
+  bool on_thread_baseline = true;
+
+  u32 (*enter_baseline_block)(JitTieredCommon* self, u32 offset, PowerPC::PowerPCState* ppcState,
+                              void* instrumentation_buffer) = nullptr;
+  u32 (*enter_optimized_block)(JitTieredCommon* self, u32 offset,
+                               PowerPC::PowerPCState* ppcState) = nullptr;
+
+  // === dispatch cache locking ===
+  /// holds a lock on disp_cache_mutex most of the time
+  std::unique_lock<std::mutex> cpu_thread_lock;
+  /// only unlocked by CPU thread when looking up JIT blocks.
+  /// only locked by other threads on code space reclamation.
+  std::mutex disp_cache_mutex;
+
+  // === Block DB ===
+  alignas(CACHELINE) std::mutex block_db_mutex;
+  std::map<u32, JitBlock> jit_block_db;
+
+  // === Baseline report ===
+  alignas(CACHELINE) std::mutex report_mutex;
+  std::condition_variable report_cv;
+  bool report_sent = false;
+  bool quit = false;
+  BaselineReport baseline_report;
+  void* next_toc = nullptr;
+
+  // === Baseline thread data ===
+  alignas(CACHELINE) std::map<u32, u32> block_counters;
+  u32 current_offset = 0;
 };

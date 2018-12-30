@@ -286,6 +286,8 @@
     <ClCompile Include="PowerPC\JitCommon\JitCache.cpp" />
     <ClCompile Include="PowerPC\JitInterface.cpp" />
     <ClCompile Include="PowerPC\JitTiered\TieredGeneric.cpp" />
+    <ClCompile Include="PowerPC\JitTiered\TieredDummy.cpp" />
+    <ClCompile Include="PowerPC\JitTiered\TieredJitCommon.cpp" />
     <ClCompile Include="PowerPC\MMU.cpp" />
     <ClCompile Include="PowerPC\PowerPC.cpp" />
     <ClCompile Include="PowerPC\PPCAnalyst.cpp" />
@@ -532,6 +534,7 @@
     <ClInclude Include="PowerPC\JitCommon\JitBase.h" />
     <ClInclude Include="PowerPC\JitCommon\JitCache.h" />
     <ClInclude Include="PowerPC\JitTiered\JitTiered.h" />
+    <ClInclude Include="PowerPC\JitTiered\TieredDummy.h" />
     <ClInclude Include="PowerPC\SignatureDB\CSVSignatureDB.h" />
     <ClInclude Include="PowerPC\SignatureDB\DSYSignatureDB.h" />
     <ClInclude Include="PowerPC\SignatureDB\MEGASignatureDB.h" />
