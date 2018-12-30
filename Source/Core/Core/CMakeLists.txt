@@ -279,6 +279,11 @@ elseif(_M_ARM_64)
     PowerPC/JitArm64/Jit_Util.cpp
     PowerPC/JitArm64/JitArm64_Tables.cpp
   )
+elseif(_M_PPC64)
+  target_sources(core PRIVATE
+    PowerPC/JitTiered/TieredPPC64.cpp
+    PowerPC/JitTiered/PPC64Baseline.cpp
+  )
 endif()
 
 target_link_libraries(core

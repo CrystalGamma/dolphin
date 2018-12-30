@@ -33,6 +33,7 @@ enum class CPUCore
   TieredGeneric = 6,
   TieredNoop = 7,
   TieredDummy = 8,
+  TieredPPC64 = 9,
 };
 
 // For reading from and writing to our config.

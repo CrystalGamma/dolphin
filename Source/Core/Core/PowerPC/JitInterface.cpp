@@ -34,6 +34,10 @@
 #include "Core/PowerPC/JitArm64/Jit.h"
 #endif
 
+#if _M_PPC64
+#include "Core/PowerPC/JitTiered/TieredPPC64.h"
+#endif
+
 namespace JitInterface
 {
 static JitBase* g_jit = nullptr;
@@ -72,6 +76,11 @@ CPUCoreBase* InitJitCore(PowerPC::CPUCore core)
   case PowerPC::CPUCore::TieredDummy:
     g_jit = new JitTieredDummy();
     break;
+#if _M_PPC64
+  case PowerPC::CPUCore::TieredPPC64:
+    g_jit = new JitTieredPPC64();
+    break;
+#endif
 
   default:
     PanicAlertT("The selected CPU emulation core (%d) is not available. "

@@ -210,6 +210,8 @@ const std::vector<CPUCore>& AvailableCPUCores()
       CPUCore::JIT64,
 #elif defined(_M_ARM_64)
       CPUCore::JITARM64,
+#elif defined(_M_PPC64)
+      CPUCore::TieredPPC64,
 #endif
   };
 
@@ -222,6 +224,8 @@ CPUCore DefaultCPUCore()
   return CPUCore::JIT64;
 #elif defined(_M_ARM_64)
   return CPUCore::JITARM64;
+#elif defined(_M_PPC64)
+  return CPUCore::TieredPPC64;
 #else
   return CPUCore::CachedInterpreter;
 #endif
