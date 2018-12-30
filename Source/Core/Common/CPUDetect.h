@@ -12,6 +12,7 @@ enum class CPUVendor
   Intel,
   AMD,
   ARM,
+  IBM,
   Other,
 };
 
@@ -61,6 +62,11 @@ struct CPUInfo
   bool bCRC32 = false;
   bool bSHA1 = false;
   bool bSHA2 = false;
+
+  // PPC64 specific
+  size_t icache_blocksize = 1;
+  size_t dcache_blocksize = 1;
+  bool icache_snoop = false;
 
   // Call Detect()
   explicit CPUInfo();

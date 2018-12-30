@@ -98,6 +98,12 @@ else()
       x64FPURoundMode.cpp
       x64CPUDetect.cpp
     )
+  elseif(_M_PPC64)
+    target_sources(common PRIVATE
+      PPCCodeSpace.cpp
+      PPCCPUDetect.cpp
+      GenericFPURoundMode.cpp
+    )
   else() # Generic
     target_sources(common PRIVATE
       GenericFPURoundMode.cpp
