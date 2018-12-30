@@ -75,44 +75,87 @@ void PPC64BaselineCompiler::Compile(u32 address,
       ANDI_Rc(SCRATCH1, SCRATCH1, 1 << 13);
       float_check = {ConditionalBranch(BR_TRUE, CR0 + EQ), downcount};
     }
-    u32 index;
-    switch (inst.OPCD)
+
+    if (inst.OPCD == 14 || inst.OPCD == 15)
     {
-    case 4:
-      index = 64 + inst.SUBOP10;
-      break;
-    case 19:
-      index = 64 + 1024 + inst.SUBOP10;
-      break;
-    case 31:
-      index = 64 + 2 * 1024 + inst.SUBOP10;
-      break;
-    case 63:
-      index = 64 + 3 * 1024 + inst.SUBOP10;
-      break;
-    case 59:
-      index = 64 + 4 * 1024 + inst.SUBOP5;
-      break;
-    default:
-      index = inst.OPCD;
+      // addi, addis
+      if (inst.RA != 0)
+      {
+        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+        DFormInstruction(inst.OPCD, SCRATCH1, SCRATCH1, inst.SIMM_16);
+      }
+      else if (inst.OPCD == 14)
+      {
+        LoadSignedImmediate(SCRATCH1, inst.SIMM_16);
+      }
+      else
+      {
+        LoadSignedImmediate(SCRATCH1, s32(inst.SIMM_16) << 16);
+      }
+      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
     }
-    // load interpreter routine
-    LD(R12, TOC,
-       s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * index) - 0x4000));
-    MTSPR(SPR_CTR, R12);
-    // load instruction value into first argument register
-    LoadUnsignedImmediate(ARG1, inst.hex);
-    // do the call
-    BCCTR();
-    // check for exceptions
-    LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-    ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-    exc_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
-    // load NPC into SCRATCH1 and return if it's ≠ PC + 4
-    LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-    XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
-    CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
-    jmp_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
+    else if (inst.OPCD >= 24 && inst.OPCD <= 29)
+    {
+      // ori(s), xori(s), andi(s).
+      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+      DFormInstruction(inst.OPCD, SCRATCH1, SCRATCH1, inst.UIMM);
+      if (inst.OPCD == 28 || inst.OPCD == 29)
+      {
+        EXTSW(SCRATCH1, SCRATCH1);
+        // FIXME: implement SO emulation?
+        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      }
+      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+    }
+    else if (inst.OPCD == 7)
+    {
+      // mulli
+      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+      MULLI(SCRATCH1, SCRATCH1, inst.SIMM_16);
+      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+    }
+    else
+    {
+      // interpreter fallback
+      u32 index;
+      switch (inst.OPCD)
+      {
+      case 4:
+        index = 64 + inst.SUBOP10;
+        break;
+      case 19:
+        index = 64 + 1024 + inst.SUBOP10;
+        break;
+      case 31:
+        index = 64 + 2 * 1024 + inst.SUBOP10;
+        break;
+      case 63:
+        index = 64 + 3 * 1024 + inst.SUBOP10;
+        break;
+      case 59:
+        index = 64 + 4 * 1024 + inst.SUBOP5;
+        break;
+      default:
+        index = inst.OPCD;
+      }
+      // load interpreter routine
+      LD(R12, TOC,
+         s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * index) - 0x4000));
+      MTSPR(SPR_CTR, R12);
+      // load instruction value into first argument register
+      LoadUnsignedImmediate(ARG1, inst.hex);
+      // do the call
+      BCCTR();
+      // check for exceptions
+      LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+      ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
+      exc_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
+      // load NPC into SCRATCH1 and return if it's ≠ PC + 4
+      LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+      XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
+      CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
+      jmp_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
+    }
     address += 4;
   }
   LoadUnsignedImmediate(SCRATCH1, address);
