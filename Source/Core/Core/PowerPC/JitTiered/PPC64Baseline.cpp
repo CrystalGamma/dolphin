@@ -39,11 +39,21 @@ void PPC64BaselineCompiler::Compile(u32 address,
   MoveReg(PPCSTATE, R5);
   ADDI(TOC, R6, 0x4000);
 
+  enum JumpFlags
+  {
+    JUMP = 0,
+    LINK = 1,
+    SKIP = 2,
+    JUMPSPR = 4,
+  };
+
   struct Exit
   {
     FixupBranch branch;
     u32 address;
     u16 downcount;
+    JumpFlags flags;
+    u32 link_address;
   };
 
   struct JumpExit
@@ -53,7 +63,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
   };
 
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
-  std::vector<Exit> idle_skips;
+  std::vector<Exit> jumps;
   std::vector<JumpExit> jmp_exits;
   std::vector<JumpExit> exc_exits;
   std::optional<JumpExit> float_check;
@@ -148,7 +158,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
       ERROR_LOG(DYNA_REC, "compiling idle skip @ %08x", address);
       LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
-      idle_skips.push_back({ConditionalBranch(BR_TRUE, CR0 + EQ), address - 8, downcount});
+      jumps.push_back({ConditionalBranch(BR_TRUE, CR0 + EQ), address - 8, downcount, SKIP, 0});
     }
     else
     {
@@ -253,17 +263,20 @@ void PPC64BaselineCompiler::Compile(u32 address,
     store_pc_exits.push_back(Jump());
   }
 
-  for (auto skip : idle_skips)
+  for (auto jump : jumps)
   {
-    SetBranchTarget(skip.branch);
-    // call CoreTiming::Idle
-    LD(R12, TOC, s16(s32(offsetof(JitTieredPPC64::TableOfContents, idle)) - 0x4000));
-    MTSPR(SPR_CTR, R12);
-    BCCTR();
+    SetBranchTarget(jump.branch);
+    if (jump.flags & SKIP)
+    {
+      // call CoreTiming::Idle
+      LD(R12, TOC, s16(s32(offsetof(JitTieredPPC64::TableOfContents, idle)) - 0x4000));
+      MTSPR(SPR_CTR, R12);
+      BCCTR();
+    }
     // decrement *after* skip – important for timing equivalency to Generic
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(skip.downcount));
-    LoadUnsignedImmediate(SCRATCH1, skip.address);
+    ADDI(SCRATCH2, SCRATCH2, -s16(jump.downcount));
+    LoadUnsignedImmediate(SCRATCH1, jump.address);
     store_pc_exits.push_back(Jump());
   }
 
