@@ -137,9 +137,6 @@ void PPC64BaselineCompiler::Compile(u32 address,
         STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       }
       STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
-      LWZ(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
-      ADDI(SCRATCH1, SCRATCH1, -s16(opinfo->numCycles));
-      STW(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
     }
     else
     {
