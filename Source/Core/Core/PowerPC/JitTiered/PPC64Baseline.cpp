@@ -46,11 +46,17 @@ void PPC64BaselineCompiler::Compile(u32 address,
     u16 downcount;
   };
 
+  struct JumpExit
+  {
+    FixupBranch branch;
+    u16 downcount;
+  };
+
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
-  std::vector<FixupBranch> exits;
-  std::vector<FixupBranch> jmp_exits;
-  std::vector<FixupBranch> exc_exits;
-  std::optional<FixupBranch> float_check;
+  std::vector<JumpExit> jmp_exits;
+  std::vector<JumpExit> exc_exits;
+  std::optional<JumpExit> float_check;
+  u16 downcount = 0;
   for (auto inst : guest_instructions)
   {
     GekkoOPInfo* opinfo = PPCTables::GetOpInfo(inst);
@@ -60,12 +66,14 @@ void PPC64BaselineCompiler::Compile(u32 address,
     STW(SCRATCH1, PPCSTATE, OFF_PC);
     ADDI(SCRATCH1, SCRATCH1, 4);
     STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+    // decrement downcount (buffered)
+    downcount += opinfo->numCycles;
     if (opinfo->flags & FL_USE_FPU && !float_check.has_value())
     {
       LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, msr)));
       // test for FP bit
       ANDI_Rc(SCRATCH1, SCRATCH1, 1 << 13);
-      float_check.emplace(ConditionalBranch(BR_TRUE, CR0 + EQ));
+      float_check = {ConditionalBranch(BR_TRUE, CR0 + EQ), downcount};
     }
     u32 index;
     switch (inst.OPCD)
@@ -96,36 +104,48 @@ void PPC64BaselineCompiler::Compile(u32 address,
     LoadUnsignedImmediate(ARG1, inst.hex);
     // do the call
     BCCTR();
-    // decrement downcount
-    LWZ(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH1, SCRATCH1, -s16(opinfo->numCycles));
-    STW(SCRATCH1, PPCSTATE, OFF_DOWNCOUNT);
     // check for exceptions
     LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
     ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-    exc_exits.push_back(ConditionalBranch(BR_FALSE, CR0 + EQ));
+    exc_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
     // load NPC into SCRATCH1 and return if it's ≠ PC + 4
     LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
     XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
     CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
-    jmp_exits.emplace_back(ConditionalBranch(BR_FALSE, CR0 + EQ));
+    jmp_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
     address += 4;
   }
   LoadUnsignedImmediate(SCRATCH1, address);
   STW(SCRATCH1, PPCSTATE, OFF_PC);
+  LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+  ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
+  STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
   LoadUnsignedImmediate(ARG1, JitTieredGeneric::BLOCK_OVERRUN);
   auto exit_branch = Jump();
 
+  std::vector<FixupBranch> check_exc_exits;
   if (float_check.has_value())
   {
-    SetBranchTarget(*float_check);
+    SetBranchTarget(float_check->branch);
     LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
     ORI(SCRATCH1, SCRATCH1, u16(EXCEPTION_FPU_UNAVAILABLE));
     STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(float_check->downcount));
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    check_exc_exits.push_back(Jump());
   }
-  // fall through to exception check
 
-  for (auto branch : exc_exits)
+  for (auto eexit : exc_exits)
+  {
+    SetBranchTarget(eexit.branch);
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(eexit.downcount));
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    check_exc_exits.push_back(Jump());
+  }
+
+  for (auto branch : check_exc_exits)
   {
     SetBranchTarget(branch);
   }
@@ -141,19 +161,25 @@ void PPC64BaselineCompiler::Compile(u32 address,
   STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
   // update PC
   LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-  // fall through: exceptions are treated as jumps (since they usually are)
+  auto exc_jump = Jump();
 
-  for (auto branch : jmp_exits)
+  std::vector<FixupBranch> store_pc_exits;
+  for (auto jexit : jmp_exits)
+  {
+    SetBranchTarget(jexit.branch);
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(jexit.downcount));
+    store_pc_exits.push_back(Jump());
+  }
+  for (auto branch : store_pc_exits)
   {
     SetBranchTarget(branch);
   }
-  // store NPC to PC
+  STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+  SetBranchTarget(exc_jump);
+  // store NPC to PC, store downcount
   STW(SCRATCH1, PPCSTATE, OFF_PC);
   LoadUnsignedImmediate(ARG1, 0);
-  for (auto branch : exits)
-  {
-    SetBranchTarget(branch);
-  }
   SetBranchTarget(exit_branch);
   LD(R29, R1, 32);
   LD(R30, R1, 40);
