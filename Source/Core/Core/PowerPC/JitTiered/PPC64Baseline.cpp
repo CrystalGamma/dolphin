@@ -200,7 +200,8 @@ void PPC64BaselineCompiler::Compile(u32 address,
   LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
   ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
   STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  LoadUnsignedImmediate(ARG1, JitTieredGeneric::BLOCK_OVERRUN);
+  bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
+  LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
   auto exit_branch = Jump();
 
   std::vector<FixupBranch> check_exc_exits;

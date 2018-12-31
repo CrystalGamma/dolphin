@@ -50,6 +50,8 @@ public:
   virtual void GetProfileResults(Profiler::ProfileStats* prof_stats) {}
   virtual void CompileExceptionCheck(JitInterface::ExceptionType) {}
 
+  static bool IsRedispatchInstruction(const UGeckoInstruction inst);
+
   static constexpr u32 EXCEPTION_SYNC =
       ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
 

@@ -189,11 +189,12 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredGeneric::LookupBlock(DispatchCach
   next_report.instructions.push_back({});
   entry->executor = interpreter_executor;
   entry->bloom = BloomCacheline(address);
-  entry->length = entry->usecount = 0;
+  entry->length = 0;
+  entry->usecount = 1;
   return entry;
 }
 
-static bool IsRedispatchInstruction(const UGeckoInstruction inst)
+bool JitTieredGeneric::IsRedispatchInstruction(const UGeckoInstruction inst)
 {
   const GekkoOPInfo* info = PPCTables::GetOpInfo(inst);
   return inst.OPCD == 9                               // sc
