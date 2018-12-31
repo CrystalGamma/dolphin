@@ -146,7 +146,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
     {
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip @ %08x", address);
-      LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
       idle_skips.push_back({ConditionalBranch(BR_TRUE, CR0 + EQ), address - 8, downcount});
     }
