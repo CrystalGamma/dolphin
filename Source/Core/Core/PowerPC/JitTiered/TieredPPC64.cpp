@@ -112,5 +112,10 @@ void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
            u64(block.executor), current_offset, compiler.instructions.size());
   // CPU::Break();
   std::unique_lock lock(block_db_mutex);
+  auto find_result = jit_block_db.find(address);
+  if (find_result != jit_block_db.end())
+  {
+    jit_block_db.erase(find_result);
+  }
   jit_block_db.emplace(address, block);
 }
