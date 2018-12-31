@@ -252,6 +252,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
     {
       // clean up blocks that were invalidated last cycle but not recompiled
       iter = jit_block_db.erase(iter);
+      continue;
     }
     const u32 jit_len = block.instructions.size();
     const bool bloom_hit = block.bloom & baseline_report.invalidation_bloom;
