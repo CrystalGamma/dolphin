@@ -58,7 +58,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
   std::vector<JumpExit> exc_exits;
   std::optional<JumpExit> float_check;
   u16 downcount = 0;
-  for (int index = 0; index < guest_instructions.size(); ++index)
+  for (u32 index = 0; index < guest_instructions.size(); ++index)
   {
     auto inst = guest_instructions[index];
     GekkoOPInfo* opinfo = PPCTables::GetOpInfo(inst);
@@ -153,30 +153,31 @@ void PPC64BaselineCompiler::Compile(u32 address,
     else
     {
       // interpreter fallback
-      u32 index;
+      u32 fallback_index;
       switch (inst.OPCD)
       {
       case 4:
-        index = 64 + inst.SUBOP10;
+        fallback_index = 64 + inst.SUBOP10;
         break;
       case 19:
-        index = 64 + 1024 + inst.SUBOP10;
+        fallback_index = 64 + 1024 + inst.SUBOP10;
         break;
       case 31:
-        index = 64 + 2 * 1024 + inst.SUBOP10;
+        fallback_index = 64 + 2 * 1024 + inst.SUBOP10;
         break;
       case 63:
-        index = 64 + 3 * 1024 + inst.SUBOP10;
+        fallback_index = 64 + 3 * 1024 + inst.SUBOP10;
         break;
       case 59:
-        index = 64 + 4 * 1024 + inst.SUBOP5;
+        fallback_index = 64 + 4 * 1024 + inst.SUBOP5;
         break;
       default:
-        index = inst.OPCD;
+        fallback_index = inst.OPCD;
       }
       // load interpreter routine
       LD(R12, TOC,
-         s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * index) - 0x4000));
+         s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * fallback_index) -
+             0x4000));
       MTSPR(SPR_CTR, R12);
       // load instruction value into first argument register
       LoadUnsignedImmediate(ARG1, inst.hex);
