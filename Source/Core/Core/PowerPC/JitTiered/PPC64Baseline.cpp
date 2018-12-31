@@ -39,7 +39,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
   MoveReg(PPCSTATE, R5);
   ADDI(TOC, R6, 0x4000);
 
-  struct ExceptionExit
+  struct Exit
   {
     FixupBranch branch;
     u32 address;
@@ -53,12 +53,14 @@ void PPC64BaselineCompiler::Compile(u32 address,
   };
 
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
+  std::vector<Exit> idle_skips;
   std::vector<JumpExit> jmp_exits;
   std::vector<JumpExit> exc_exits;
   std::optional<JumpExit> float_check;
   u16 downcount = 0;
-  for (auto inst : guest_instructions)
+  for (int index = 0; index < guest_instructions.size(); ++index)
   {
+    auto inst = guest_instructions[index];
     GekkoOPInfo* opinfo = PPCTables::GetOpInfo(inst);
     INFO_LOG(DYNA_REC, "%08x: %08x %s", address, inst.hex, opinfo->opname);
     // set PC + NPC
@@ -137,6 +139,16 @@ void PPC64BaselineCompiler::Compile(u32 address,
         STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       }
       STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+    }
+    else if (inst.hex == 0x4182fff8 && index >= 2 &&
+             (guest_instructions[index - 2].hex >> 16) == 0x800d &&
+             guest_instructions[index - 1].hex == 0x28000000)
+    {
+      // idle skip as detected in Interpreter
+      ERROR_LOG(DYNA_REC, "compiling idle skip @ %08x", address);
+      LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
+      idle_skips.push_back({ConditionalBranch(BR_TRUE, CR0 + EQ), address - 8, downcount});
     }
     else
     {
@@ -238,6 +250,21 @@ void PPC64BaselineCompiler::Compile(u32 address,
     ADDI(SCRATCH2, SCRATCH2, -s16(jexit.downcount));
     store_pc_exits.push_back(Jump());
   }
+
+  for (auto skip : idle_skips)
+  {
+    SetBranchTarget(skip.branch);
+    // call CoreTiming::Idle
+    LD(R12, TOC, s16(s32(offsetof(JitTieredPPC64::TableOfContents, idle)) - 0x4000));
+    MTSPR(SPR_CTR, R12);
+    BCCTR();
+    // decrement *after* skip – important for timing equivalency to Generic
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(skip.downcount));
+    LoadUnsignedImmediate(SCRATCH1, skip.address);
+    store_pc_exits.push_back(Jump());
+  }
+
   for (auto branch : store_pc_exits)
   {
     SetBranchTarget(branch);

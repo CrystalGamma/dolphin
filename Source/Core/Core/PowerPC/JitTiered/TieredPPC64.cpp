@@ -6,6 +6,7 @@
 
 #include <cinttypes>
 
+#include "Core/CoreTiming.h"
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
@@ -34,6 +35,7 @@ JitTieredPPC64::JitTieredPPC64()
   }
   toc.check_exceptions = PowerPC::CheckExceptions;
   toc.check_external_exceptions = PowerPC::CheckExternalExceptions;
+  toc.idle = CoreTiming::Idle;
   current_toc = next_toc = &toc;
   on_thread_baseline = false;
 }

@@ -14,6 +14,7 @@ public:
   {
     void (*check_exceptions)();
     void (*check_external_exceptions)();
+    void (*idle)();
     std::array<InterpreterFunc, 64 + 4 * 1024 + 32> fallback_table;
   };
   JitTieredPPC64();
