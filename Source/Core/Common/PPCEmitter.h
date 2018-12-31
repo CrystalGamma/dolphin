@@ -126,6 +126,12 @@ public:
     CMP_DWORD = 1
   };
 
+  enum Record
+  {
+    NO_RC = 0,
+    RC = 1
+  };
+
   void DFormInstruction(u32 opcode, GPR r1, GPR r2, u16 imm)
   {
     instructions.push_back((opcode << 26) | (u32(r1) << 21) | (u32(r2) << 16) | u32(imm));
@@ -222,6 +228,14 @@ public:
   {
     XFormInstruction(31, static_cast<GPR>(bf + l), ra, rb, 32);
   }
+  void CMPI(CRF bf, CompareSize l, GPR ra, u16 imm)
+  {
+    DFormInstruction(11, static_cast<GPR>(bf + l), ra, imm);
+  }
+  void CMP(CRF bf, CompareSize l, GPR ra, GPR rb)
+  {
+    XFormInstruction(31, static_cast<GPR>(bf + l), ra, rb, 0);
+  }
 
   // === ≤32-bit load/store ===
   void LWZ(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(32, rt, ra, disp); }
@@ -314,6 +328,12 @@ public:
   }
 
   void EXTSW(GPR ra, GPR rs) { XFormInstruction(31, rs, ra, R0, 986); }
+
+  void RLDICL(GPR ra, GPR rs, u32 sh, u32 mb, Record rc = NO_RC)
+  {
+    instructions.push_back((30u << 26) | (u32(rs) << 21) | (u32(ra) << 16) | ((sh & 31) << 11) |
+                           ((mb & 63) << 5) | (0 << 2) | ((sh & 32) >> 4) | u32(rc));
+  }
 
   std::vector<u32> instructions;
 };
