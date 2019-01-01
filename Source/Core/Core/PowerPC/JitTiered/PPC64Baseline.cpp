@@ -8,26 +8,11 @@
 #include <optional>
 
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
-#include "Core/PowerPC/PPCTables.h"
-#include "Core/PowerPC/PowerPC.h"
 
-constexpr s16 GPROffset(u32 i)
-{
-  return s16(offsetof(PowerPC::PowerPCState, gpr) + 4 * i);
-}
-
-void PPC64BaselineCompiler::Compile(u32 address,
+void PPC64BaselineCompiler::Compile(u32 addr,
                                     const std::vector<UGeckoInstruction>& guest_instructions)
 {
-  constexpr GPR PPCSTATE = R30;
-  constexpr GPR TOC = R29;
-  constexpr GPR SCRATCH1 = R7;
-  constexpr GPR SCRATCH2 = R8;
-  constexpr GPR SAVED1 = R31;
-  constexpr GPR ARG1 = R3;
-  constexpr s16 OFF_PC = s16(offsetof(PowerPC::PowerPCState, pc));
-  constexpr s16 OFF_DOWNCOUNT = s16(offsetof(PowerPC::PowerPCState, downcount));
-  constexpr s16 OFF_EXCEPTIONS = s16(offsetof(PowerPC::PowerPCState, Exceptions));
+  address = addr;
   // allocate stack frame
   MFSPR(R0, SPR_LR);
   STD(R0, R1, 16);
@@ -39,35 +24,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
   MoveReg(PPCSTATE, R5);
   ADDI(TOC, R6, 0x4000);
 
-  enum JumpFlags
-  {
-    JUMP = 0,
-    LINK = 1,
-    SKIP = 2,
-    JUMPSPR = 4,
-  };
-
-  struct Exit
-  {
-    FixupBranch branch;
-    u32 address;
-    u16 downcount;
-    JumpFlags flags;
-    u32 link_address;
-  };
-
-  struct JumpExit
-  {
-    FixupBranch branch;
-    u16 downcount;
-  };
-
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
-  std::vector<Exit> jumps;
-  std::vector<JumpExit> jmp_exits;
-  std::vector<JumpExit> exc_exits;
-  std::optional<JumpExit> float_check;
-  u16 downcount = 0;
   for (u32 index = 0; index < guest_instructions.size(); ++index)
   {
     auto inst = guest_instructions[index];
@@ -162,46 +119,7 @@ void PPC64BaselineCompiler::Compile(u32 address,
     }
     else
     {
-      // interpreter fallback
-      u32 fallback_index;
-      switch (inst.OPCD)
-      {
-      case 4:
-        fallback_index = 64 + inst.SUBOP10;
-        break;
-      case 19:
-        fallback_index = 64 + 1024 + inst.SUBOP10;
-        break;
-      case 31:
-        fallback_index = 64 + 2 * 1024 + inst.SUBOP10;
-        break;
-      case 63:
-        fallback_index = 64 + 3 * 1024 + inst.SUBOP10;
-        break;
-      case 59:
-        fallback_index = 64 + 4 * 1024 + inst.SUBOP5;
-        break;
-      default:
-        fallback_index = inst.OPCD;
-      }
-      // load interpreter routine
-      LD(R12, TOC,
-         s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * fallback_index) -
-             0x4000));
-      MTSPR(SPR_CTR, R12);
-      // load instruction value into first argument register
-      LoadUnsignedImmediate(ARG1, inst.hex);
-      // do the call
-      BCCTR();
-      // check for exceptions
-      LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-      ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-      exc_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
-      // load NPC into SCRATCH1 and return if it's ≠ PC + 4
-      LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-      XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
-      CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
-      jmp_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
+      FallbackToInterpreter(inst, *opinfo);
     }
     address += 4;
   }
@@ -298,4 +216,47 @@ void PPC64BaselineCompiler::Compile(u32 address,
   MTSPR(SPR_LR, R0);
   BCLR();
   return;
+}
+
+void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
+{
+  u32 fallback_index;
+  switch (inst.OPCD)
+  {
+  case 4:
+    fallback_index = 64 + inst.SUBOP10;
+    break;
+  case 19:
+    fallback_index = 64 + 1024 + inst.SUBOP10;
+    break;
+  case 31:
+    fallback_index = 64 + 2 * 1024 + inst.SUBOP10;
+    break;
+  case 63:
+    fallback_index = 64 + 3 * 1024 + inst.SUBOP10;
+    break;
+  case 59:
+    fallback_index = 64 + 4 * 1024 + inst.SUBOP5;
+    break;
+  default:
+    fallback_index = inst.OPCD;
+  }
+  // load interpreter routine
+  LD(R12, TOC,
+     s16(s32(offsetof(JitTieredPPC64::TableOfContents, fallback_table) + 8 * fallback_index) -
+         0x4000));
+  MTSPR(SPR_CTR, R12);
+  // load instruction value into first argument register
+  LoadUnsignedImmediate(ARG1, inst.hex);
+  // do the call
+  BCCTR();
+  // check for exceptions
+  LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+  ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
+  exc_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
+  // load NPC into SCRATCH1 and return if it's ≠ PC + 4
+  LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+  XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
+  CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
+  jmp_exits.push_back({ConditionalBranch(BR_FALSE, CR0 + EQ), downcount});
 }
