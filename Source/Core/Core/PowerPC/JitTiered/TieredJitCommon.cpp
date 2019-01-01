@@ -102,40 +102,15 @@ void JitTieredCommon::Run()
       cache_entry->usecount = usecount;
       const u32 flags =
           cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
-      // block overrun is a little annoying in the JIT. to be deterministic,
-      // we have to act as if the block never ended (not advance the time, not return from Run())
-      bool overrun = false;
-      if (flags & BLOCK_OVERRUN)
+      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
+      if ((flags & BLOCK_OVERRUN) && !breakpoint)
       {
-        // interpreter and Baseline blocks use a run-loop-driven execution counter
-        if (cache_entry->executor == interpreter_executor)
-        {
-          if (cache_entry->offset < offset_new)
-          {
-            // we have already reported this block: invalidate the Baseline block
-            INFO_LOG(DYNA_REC, "extending reported interpreter block @ %08x", start_addr);
-          }
-          breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
-          if (!breakpoint)
-          {
-            ReadInstructions(cache_entry);
-          }
-        }
-        else
-        {
-          overrun = HandleJitOverrun(start_addr, cache_entry);
-        }
+        HandleOverrun(cache_entry);
+        breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       }
       if (usecount >= REPORT_THRESHOLD || flags & REPORT_IMMEDIATELY)
       {
         CPUDoReport(flags & REPORT_IMMEDIATELY, true);
-      }
-      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
-      if (overrun && !breakpoint)
-      {
-        INFO_LOG(DYNA_REC, "overrun @ %08x", start_addr);
-        // don't check the loop condition
-        continue;
       }
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
@@ -158,53 +133,38 @@ void JitTieredCommon::Run()
   }
 }
 
-bool JitTieredCommon::HandleJitOverrun(u32 start_addr, DispatchCacheEntry* cache_entry)
+void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
 {
+  const u32 start_addr = cache_entry->address;
   INFO_LOG(DYNA_REC, "baseline block overrun @ %08x", start_addr);
 
   u32 offset = next_report.instructions.size();
   u32 len = 0;
+  if (cache_entry->executor != interpreter_executor)
   {
-    std::lock_guard lock(block_db_mutex);
-    // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
-    // bloom filters
-    auto find_result = jit_block_db.find(start_addr);
-    if (find_result != jit_block_db.end())
     {
+      std::lock_guard lock(block_db_mutex);
+      // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
+      // bloom filters
+      auto find_result = jit_block_db.find(start_addr);
+      ASSERT(find_result != jit_block_db.end());
       const std::vector<DecodedInstruction>& instructions = find_result->second.instructions;
       len = instructions.size();
-      if (len == 0)
-      {
-        ERROR_LOG(DYNA_REC, "zero-length baseline block");
-      }
       for (const DecodedInstruction& inst : instructions)
       {
         next_report.instructions.push_back(inst);
       }
       next_report.instructions.push_back({});
     }
-    else
-    {
-      ERROR_LOG(DYNA_REC, "couldn't find block");
-    }
-  }
 
-  if (len)
-  {
     // address is already correct
     cache_entry->offset = offset;
     cache_entry->length = len;
     cache_entry->executor = interpreter_executor;
     // bloom is already correct
     // leave usecount untouched
-    ReadInstructions(cache_entry);
-    return false;
   }
-  else
-  {
-    cache_entry->Invalidate();
-    return true;
-  }
+  JitTieredGeneric::HandleOverrun(cache_entry);
 }
 
 JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCacheEntry* cache_entry,

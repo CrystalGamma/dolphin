@@ -247,7 +247,7 @@ bool JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
   return true;
 }
 
-void JitTieredGeneric::ReadInstructions(DispatchCacheEntry* cache_entry)
+void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
 {
   const u32 len = cache_entry->length;
   const u32 offset = cache_entry->offset;
@@ -362,7 +362,7 @@ void JitTieredGeneric::SingleStep()
   bool overrun = InterpretBlock(&next_report.instructions[entry->offset]);
   if (overrun && !PowerPC::breakpoints.IsAddressBreakPoint(PC))
   {
-    ReadInstructions(entry);
+    HandleOverrun(entry);
   }
 }
 
@@ -394,7 +394,7 @@ void JitTieredGeneric::Run()
       breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       if (overrun && !breakpoint)
       {
-        ReadInstructions(entry);
+        HandleOverrun(entry);
         breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       }
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);

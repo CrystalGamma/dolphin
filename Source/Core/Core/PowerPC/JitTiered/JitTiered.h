@@ -148,7 +148,7 @@ protected:
 
   void CompactInterpreterBlocks(BaselineReport* report, bool keep_old_blocks);
   static bool InterpretBlock(const DecodedInstruction* instructions);
-  void ReadInstructions(DispatchCacheEntry* entry);
+  virtual void HandleOverrun(DispatchCacheEntry* entry);
   void RunZeroInstruction();
 
   DispatchCacheEntry* FindBlock(u32 address);
@@ -209,7 +209,7 @@ protected:
   };
 
   void CPUDoReport(bool wait, bool hint);
-  bool HandleJitOverrun(u32 start_addr, DispatchCacheEntry*);
+  virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
 
   bool BaselineIteration();
