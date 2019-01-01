@@ -237,7 +237,7 @@ bool JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
   {
     const DecodedInstruction& last = *(instructions - 1);
     PowerPC::ppcState.downcount -= last.cycles;
-    if (IsRedispatchInstruction(last.inst) || PowerPC::breakpoints.IsAddressBreakPoint(PC))
+    if (IsRedispatchInstruction(last.inst))
     {
       // even if the block didn't end here, we have to go back to dispatcher
       // because of e. g. invalidation or breakpoints
@@ -352,11 +352,15 @@ void JitTieredGeneric::ReadInstructions(DispatchCacheEntry* cache_entry)
 void JitTieredGeneric::SingleStep()
 {
   CoreTiming::Advance();
+  if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
+  {
+    PowerPC::CheckBreakPoints();
+  }
   DispatchCacheEntry* entry = FindBlock(PC);
   entry->usecount += 1;
   // generic path only creates interpreter blocks
   bool overrun = InterpretBlock(&next_report.instructions[entry->offset]);
-  if (overrun)
+  if (overrun && !PowerPC::breakpoints.IsAddressBreakPoint(PC))
   {
     ReadInstructions(entry);
   }
@@ -365,6 +369,7 @@ void JitTieredGeneric::SingleStep()
 void JitTieredGeneric::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
+  bool breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
   BaselineReport last_report;
   while (*state == CPU::State::Running)
   {
@@ -378,13 +383,19 @@ void JitTieredGeneric::Run()
     }
     do
     {
+      if (breakpoint)
+      {
+        PowerPC::CheckBreakPoints();
+      }
       DispatchCacheEntry* entry = FindBlock(PC);
       entry->usecount += 1;
       // generic path only creates interpreter blocks
       bool overrun = InterpretBlock(&next_report.instructions[entry->offset]);
-      if (overrun)
+      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
+      if (overrun && !breakpoint)
       {
         ReadInstructions(entry);
+        breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       }
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }

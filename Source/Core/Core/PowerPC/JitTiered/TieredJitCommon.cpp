@@ -67,6 +67,7 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
 void JitTieredCommon::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
+  bool breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
   std::thread compiler_thread;
   if (!on_thread_baseline)
   {
@@ -87,6 +88,10 @@ void JitTieredCommon::Run()
 
     do
     {
+      if (breakpoint)
+      {
+        PowerPC::CheckBreakPoint();
+      }
       const u32 start_addr = PC;
       if (!cpu_thread_lock.owns_lock())
       {
@@ -110,7 +115,11 @@ void JitTieredCommon::Run()
             // we have already reported this block: invalidate the Baseline block
             INFO_LOG(DYNA_REC, "extending reported interpreter block @ %08x", start_addr);
           }
-          ReadInstructions(cache_entry);
+          breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
+          if (!breakpoint)
+          {
+            ReadInstructions(cache_entry);
+          }
         }
         else
         {
@@ -121,7 +130,8 @@ void JitTieredCommon::Run()
       {
         CPUDoReport(flags & REPORT_IMMEDIATELY, true);
       }
-      if (overrun)
+      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
+      if (overrun && !breakpoint)
       {
         INFO_LOG(DYNA_REC, "overrun @ %08x", start_addr);
         // don't check the loop condition
