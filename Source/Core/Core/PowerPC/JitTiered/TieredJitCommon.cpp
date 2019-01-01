@@ -67,7 +67,6 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
 void JitTieredCommon::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
-  bool breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
   std::thread compiler_thread;
   if (!on_thread_baseline)
   {
@@ -88,10 +87,6 @@ void JitTieredCommon::Run()
 
     do
     {
-      if (breakpoint)
-      {
-        PowerPC::CheckBreakPoint();
-      }
       const u32 start_addr = PC;
       if (!cpu_thread_lock.owns_lock())
       {
@@ -102,16 +97,15 @@ void JitTieredCommon::Run()
       cache_entry->usecount = usecount;
       const u32 flags =
           cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
-      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
-      if ((flags & BLOCK_OVERRUN) && !breakpoint)
+      if (flags & BLOCK_OVERRUN)
       {
         HandleOverrun(cache_entry);
-        breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       }
       if (usecount >= REPORT_THRESHOLD || flags & REPORT_IMMEDIATELY)
       {
         CPUDoReport(flags & REPORT_IMMEDIATELY, true);
       }
+      PowerPC::CheckBreakPoints();
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
   if (cpu_thread_lock.owns_lock())

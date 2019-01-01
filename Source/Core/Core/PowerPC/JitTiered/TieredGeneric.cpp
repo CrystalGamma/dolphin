@@ -271,8 +271,11 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
   u16 cycles_new = 0;
   do
   {
-    // handle temporary breakpoints
-    PowerPC::CheckBreakPoints();
+    if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
+    {
+      INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
+      break;
+    }
     const UGeckoInstruction inst(PowerPC::Read_Opcode(PC));
     if (inst.hex == 0)
     {
@@ -280,12 +283,6 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
       PowerPC::ppcState.downcount -= cycles_new;
       PowerPC::CheckExceptions();
       return;
-    }
-    // end the block only on permanent breakpoints
-    if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
-    {
-      INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
-      break;
     }
     u16 inst_cycles = PPCTables::GetOpInfo(inst)->numCycles;
     if (inst_cycles > 0xffff - cycles_total)
@@ -352,24 +349,19 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
 void JitTieredGeneric::SingleStep()
 {
   CoreTiming::Advance();
-  if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
-  {
-    PowerPC::CheckBreakPoints();
-  }
   DispatchCacheEntry* entry = FindBlock(PC);
   entry->usecount += 1;
-  // generic path only creates interpreter blocks
-  bool overrun = InterpretBlock(&next_report.instructions[entry->offset]);
-  if (overrun && !PowerPC::breakpoints.IsAddressBreakPoint(PC))
+  u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
+  if (flags & BLOCK_OVERRUN)
   {
     HandleOverrun(entry);
   }
+  PowerPC::CheckBreakPoints();
 }
 
 void JitTieredGeneric::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
-  bool breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
   BaselineReport last_report;
   while (*state == CPU::State::Running)
   {
@@ -383,20 +375,14 @@ void JitTieredGeneric::Run()
     }
     do
     {
-      if (breakpoint)
-      {
-        PowerPC::CheckBreakPoints();
-      }
       DispatchCacheEntry* entry = FindBlock(PC);
       entry->usecount += 1;
-      // generic path only creates interpreter blocks
-      bool overrun = InterpretBlock(&next_report.instructions[entry->offset]);
-      breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
-      if (overrun && !breakpoint)
+      u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
+      if (flags & BLOCK_OVERRUN)
       {
         HandleOverrun(entry);
-        breakpoint = PowerPC::breakpoints.IsAddressBreakPoint(PC);
       }
+      PowerPC::CheckBreakPoints();
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
 }
