@@ -220,9 +220,7 @@ bool JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
     }
     if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
-      PowerPC::CheckExceptions();
       PowerPC::ppcState.downcount -= inst.cycles;
-      PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
       return false;
     }
     if (NPC != PC + 4)
@@ -271,7 +269,8 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
   u16 cycles_new = 0;
   do
   {
-    if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
+    // if length is 0, it means we are resuming after the breakpoint
+    if (PowerPC::breakpoints.IsAddressBreakPoint(PC) && cache_entry->length != 0)
     {
       INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
       break;
@@ -281,7 +280,6 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
     {
       PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
       PowerPC::ppcState.downcount -= cycles_new;
-      PowerPC::CheckExceptions();
       return;
     }
     u16 inst_cycles = PPCTables::GetOpInfo(inst)->numCycles;
@@ -332,8 +330,6 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
     if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
       PowerPC::ppcState.downcount -= cycles_new;
-      PowerPC::CheckExceptions();
-      PowerPC::ppcState.Exceptions &= ~EXCEPTION_SYNC;
       return;
     }
     PC += 4;
@@ -349,6 +345,7 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
 void JitTieredGeneric::SingleStep()
 {
   CoreTiming::Advance();
+  PowerPC::CheckExternalExceptions();
   DispatchCacheEntry* entry = FindBlock(PC);
   entry->usecount += 1;
   u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
@@ -356,6 +353,7 @@ void JitTieredGeneric::SingleStep()
   {
     HandleOverrun(entry);
   }
+  PowerPC::CheckExceptions();
   PowerPC::CheckBreakPoints();
 }
 
@@ -366,6 +364,7 @@ void JitTieredGeneric::Run()
   while (*state == CPU::State::Running)
   {
     CoreTiming::Advance();
+    PowerPC::CheckExternalExceptions();
     // this heuristic works well for the interpreter-only case
     size_t num_instructions = next_report.instructions.size();
     if (num_instructions >= (1 << 20) && num_instructions >= 2 * last_report.instructions.size())
@@ -382,6 +381,7 @@ void JitTieredGeneric::Run()
       {
         HandleOverrun(entry);
       }
+      PowerPC::CheckExceptions();
       PowerPC::CheckBreakPoints();
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
