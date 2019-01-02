@@ -231,7 +231,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
   auto exc_jump = B();
 
-  std::vector<FixupBranch> store_pc_exits;
   for (auto jexit : jmp_exits)
   {
     SetBranchTarget(jexit.branch);
@@ -256,13 +255,11 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     // decrement *after* skip – important for timing equivalency to Generic
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     ADDI(SCRATCH2, SCRATCH2, -s16(jump.downcount));
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     LoadUnsignedImmediate(SCRATCH1, jump.address);
-    store_pc_exits.push_back(B());
-  }
-
-  for (auto branch : store_pc_exits)
-  {
-    SetBranchTarget(branch);
+    STW(SCRATCH1, PPCSTATE, OFF_PC);
+    LoadUnsignedImmediate(ARG1, 0);
+    RestoreRegistersReturn(saved_regs);
   }
   STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
   SetBranchTarget(exc_jump);
