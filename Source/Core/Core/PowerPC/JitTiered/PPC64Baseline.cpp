@@ -363,8 +363,7 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  if (inst.OPCD != 19 || !(inst.BO & BO_DONT_CHECK_CONDITION) ||
-      !(inst.BO & BO_DONT_DECREMENT_FLAG))
+  if (!(inst.BO & BO_DONT_CHECK_CONDITION))
   {
     FallbackToInterpreter(inst, opinfo);
     return;
@@ -412,7 +411,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     if (inst.BO & BO_DONT_CHECK_CONDITION)
     {
       bit = CR1 + EQ;
-      inverted = branch_on_zero;
+      inverted = !branch_on_zero;
     }
     else if (!inverted && branch_on_zero)
     {
@@ -421,6 +420,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     else if (branch_on_zero)
     {
       CRANDC(bit, CR1 + EQ, bit);
+      inverted = false;
     }
     else if (!inverted)
     {
@@ -429,11 +429,16 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     else
     {
       CRNOR(bit, bit, CR1 + EQ);
+      inverted = false;
     }
   }
   FixupBranch branch;
-  if ((inst.BO & ~(BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
+  if ((~inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
   {
+    if (inst.OPCD == 16)
+    {
+      WARN_LOG(DYNA_REC, "unconditional BC @ %08x", address);
+    }
     branch = B();
   }
   else
@@ -445,6 +450,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     u32 jump_base = inst.AA ? 0 : address;
     // man, this sign-extension looks ugly
     u32 target = jump_base + Common::BitCast<u32>(s32(Common::BitCast<s16>(u16(inst.BD << 2))));
+    INFO_LOG(DYNA_REC, "target: %08x", target);
     jumps.push_back({branch, target, downcount, inst.LK ? LINK : JUMP, address + 4});
   }
   else
