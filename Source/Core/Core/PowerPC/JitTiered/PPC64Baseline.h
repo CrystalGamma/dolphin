@@ -62,9 +62,10 @@ private:
     u32 link_address;
   };
 
-  struct JumpExit
+  struct FallbackExit
   {
-    FixupBranch branch;
+    FixupBranch store_pc;
+    FixupBranch leave_pc;
     s32 downcount;
   };
 
@@ -99,6 +100,5 @@ private:
   s32 downcount = 0;
 
   std::vector<Exit> exits;
-  std::vector<JumpExit> jmp_exits;
-  std::vector<JumpExit> exc_exits;
+  std::vector<FallbackExit> fallback_exits;
 };

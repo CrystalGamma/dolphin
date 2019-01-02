@@ -281,23 +281,14 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
   RestoreRegistersReturn(saved_regs);
 
-  for (auto eexit : exc_exits)
+  for (auto fexit : fallback_exits)
   {
-    SetBranchTarget(eexit.branch);
-    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(eexit.downcount));
-    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    LoadUnsignedImmediate(ARG1, 0);
-    RestoreRegistersReturn(saved_regs);
-  }
-
-  for (auto jexit : jmp_exits)
-  {
-    SetBranchTarget(jexit.branch);
-    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(jexit.downcount));
-    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    SetBranchTarget(fexit.store_pc);
     STW(SCRATCH1, PPCSTATE, OFF_PC);
+    SetBranchTarget(fexit.leave_pc);
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(fexit.downcount));
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     LoadUnsignedImmediate(ARG1, 0);
     RestoreRegistersReturn(saved_regs);
   }
@@ -389,12 +380,13 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   // check for exceptions
   LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
   ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-  exc_exits.push_back({BC(BR_FALSE, CR0 + EQ), downcount});
+  auto exc_exit = BC(BR_FALSE, CR0 + EQ);
   // load NPC into SCRATCH1 and return if it's ≠ PC + 4
   LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
   XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
   CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
-  jmp_exits.push_back({BC(BR_FALSE, CR0 + EQ), downcount});
+  auto jump_exit = BC(BR_FALSE, CR0 + EQ);
+  fallback_exits.push_back({jump_exit, exc_exit, downcount});
 }
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
