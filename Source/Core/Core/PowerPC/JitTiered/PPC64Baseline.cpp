@@ -15,6 +15,12 @@ void PPC64BaselineCompiler::RestoreRegistersReturn(u32 saved_regs)
   relocations.push_back(B(BR_NORMAL, offsets.restore_gpr_return + (18 - saved_regs) * 4));
 }
 
+void PPC64BaselineCompiler::RestoreRegisters(u32 saved_regs)
+{
+  ADDI(R12, R1, 32 + 8 * saved_regs);
+  relocations.push_back(B(BR_LINK, offsets.restore_gpr + (18 - saved_regs) * 4));
+}
+
 void PPC64BaselineCompiler::EmitCommonRoutines()
 {
   // these three are recommended sequences from the ELFv2 spec
