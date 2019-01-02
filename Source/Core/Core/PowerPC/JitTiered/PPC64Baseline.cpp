@@ -363,8 +363,12 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  FallbackToInterpreter(inst, opinfo);
-  return;
+  if (inst.OPCD != 19 || inst.LK || !(inst.BO & BO_DONT_CHECK_CONDITION) ||
+      !(inst.BO & BO_DONT_DECREMENT_FLAG))
+  {
+    FallbackToInterpreter(inst, opinfo);
+    return;
+  }
   bool branch_on_true = inst.BO & BO_BRANCH_IF_TRUE;
   LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
   bool inverted = false;
@@ -376,25 +380,25 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     case LT:
       INFO_LOG(DYNA_REC, "LT branch");
       RLDICL(SCRATCH1, SCRATCH1, 2, 63, RC);
-      inverted = !branch_on_true;
+      inverted = branch_on_true;
       bit = CR0 + EQ;
       break;
     case GT:
       INFO_LOG(DYNA_REC, "GT branch");
       CMPI(CR0, CMP_DWORD, SCRATCH1, 0);
-      inverted = branch_on_true;
+      inverted = !branch_on_true;
       bit = CR0 + GT;
       break;
     case EQ:
-      INFO_LOG(DYNA_REC, "EQ branch");
+      WARN_LOG(DYNA_REC, "EQ branch @ %08x", address);
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
-      inverted = branch_on_true;
+      inverted = !branch_on_true;
       bit = CR0 + EQ;
       break;
     case SO:
       TW();
       RLDICL(SCRATCH1, SCRATCH1, 3, 63, RC);
-      inverted = branch_on_true;
+      inverted = !branch_on_true;
       bit = CR0 + EQ;
     }
   }
