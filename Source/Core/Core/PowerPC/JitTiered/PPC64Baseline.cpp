@@ -67,14 +67,13 @@ void PPC64BaselineCompiler::Compile(u32 addr,
                                     const std::vector<UGeckoInstruction>& guest_instructions)
 {
   address = addr;
-  // allocate stack frame
+  u32 saved_regs = 3;
+  // allocate stack frame, save caller registers
   MFSPR(R0, SPR_LR);
   STD(R0, R1, 16);
-  STD(R1, R1, -56, UPDATE);
-  // save caller registers and replace them with our values
-  STD(R29, R1, 32);
-  STD(R30, R1, 40);
-  STD(R31, R1, 48);
+  relocations.push_back(B(BR_LINK, offsets.save_gprs + (18 - saved_regs) * 4));
+  STD(R1, R1, -32 - 8 * saved_regs, UPDATE);
+  // copy our variables
   MoveReg(PPCSTATE, R5);
   ADDI(TOC, R6, 0x4000);
 
