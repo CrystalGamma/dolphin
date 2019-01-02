@@ -75,11 +75,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     auto inst = guest_instructions[index];
     GekkoOPInfo* opinfo = PPCTables::GetOpInfo(inst);
     INFO_LOG(DYNA_REC, "%08x: %08x %s", address, inst.hex, opinfo->opname);
-    // set PC + NPC
-    LoadUnsignedImmediate(SCRATCH1, address);
-    STW(SCRATCH1, PPCSTATE, OFF_PC);
-    ADDI(SCRATCH1, SCRATCH1, 4);
-    STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
     // decrement downcount (buffered)
     downcount += opinfo->numCycles;
     if (opinfo->flags & FL_USE_FPU && !float_checked)
@@ -274,6 +269,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   }
   LoadUnsignedImmediate(SCRATCH1, address);
   STW(SCRATCH1, PPCSTATE, OFF_PC);
+  STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
   LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
   ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
   STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
@@ -349,6 +345,11 @@ void PPC64BaselineCompiler::RelocateAll(u32 offset)
 
 void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
+  // set PC + NPC
+  LoadUnsignedImmediate(SCRATCH1, address);
+  STW(SCRATCH1, PPCSTATE, OFF_PC);
+  ADDI(SCRATCH1, SCRATCH1, 4);
+  STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
   u32 fallback_index;
   switch (inst.OPCD)
   {
