@@ -363,8 +363,7 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  if ((!(inst.BO & BO_DONT_CHECK_CONDITION) && inst.BI % 4 != EQ) ||
-      (inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
+  if ((inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
   {
     FallbackToInterpreter(inst, opinfo);
     return;
@@ -378,13 +377,13 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     switch (inst.BI % 4)
     {
     case LT:
-      INFO_LOG(DYNA_REC, "LT branch");
+      INFO_LOG(DYNA_REC, "LT branch @ %08x", address);
       RLDICL(SCRATCH1, SCRATCH1, 2, 63, RC);
       inverted = branch_on_true;
       bit = CR0 + EQ;
       break;
     case GT:
-      INFO_LOG(DYNA_REC, "GT branch");
+      INFO_LOG(DYNA_REC, "GT branch @ %08x", address);
       CMPI(CR0, CMP_DWORD, SCRATCH1, 0);
       inverted = !branch_on_true;
       bit = CR0 + GT;
@@ -396,6 +395,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
       bit = CR0 + EQ;
       break;
     case SO:
+      INFO_LOG(DYNA_REC, "SO branch @ %08x", address);
       TW();
       RLDICL(SCRATCH1, SCRATCH1, 3, 63, RC);
       inverted = !branch_on_true;
