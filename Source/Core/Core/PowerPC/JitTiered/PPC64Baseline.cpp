@@ -237,7 +237,10 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     SetBranchTarget(jexit.branch);
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     ADDI(SCRATCH2, SCRATCH2, -s16(jexit.downcount));
-    store_pc_exits.push_back(B());
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    STW(SCRATCH1, PPCSTATE, OFF_PC);
+    LoadUnsignedImmediate(ARG1, 0);
+    RestoreRegistersReturn(saved_regs);
   }
 
   for (auto jump : jumps)
