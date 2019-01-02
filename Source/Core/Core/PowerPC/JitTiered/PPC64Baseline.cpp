@@ -69,6 +69,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   ADDI(TOC, R6, 0x4000);
 
   bool float_checked = false;
+  bool omit_epilogue = false;
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
   for (u32 index = 0; index < guest_instructions.size(); ++index)
   {
@@ -164,6 +165,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip (empty loop) @ %08x", address);
       WriteExit({address, downcount, SKIP, 0});
+      omit_epilogue = true;
+      break;
     }
     else if (inst.OPCD == 18)
     {
@@ -171,6 +174,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       u32 base = inst.AA ? 0 : address;
       u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
       WriteExit({target, downcount, inst.LK ? LINK : JUMP, address + 4});
+      omit_epilogue = true;
+      break;
     }
     else if (inst.OPCD == 16 || (inst.OPCD == 19 && inst.SUBOP5 == 16))
     {
@@ -186,15 +191,18 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     }
     address += 4;
   }
-  LoadUnsignedImmediate(SCRATCH1, address);
-  STW(SCRATCH1, PPCSTATE, OFF_PC);
-  STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-  LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
-  STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
-  LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
-  RestoreRegistersReturn(saved_regs);
+  if (!omit_epilogue)
+  {
+    LoadUnsignedImmediate(SCRATCH1, address);
+    STW(SCRATCH1, PPCSTATE, OFF_PC);
+    STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
+    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    const bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
+    LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
+    RestoreRegistersReturn(saved_regs);
+  }
 
   for (auto fexit : fallback_exits)
   {
