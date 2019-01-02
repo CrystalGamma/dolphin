@@ -15,8 +15,29 @@
 class PPC64BaselineCompiler final : public PPCEmitter
 {
 public:
+  struct TableOfContents
+  {
+    void (*check_exceptions)();
+    void (*check_external_exceptions)();
+    void (*idle)();
+    std::array<void (*)(UGeckoInstruction), 64 + 4 * 1024 + 32> fallback_table;
+  };
+  struct CommonRoutineOffsets
+  {
+    u32 save_gprs;
+    u32 restore_gpr_return;
+    u32 restore_gpr;
+    u32 exception_exit;
+    u32 end;
+  };
   PPC64BaselineCompiler() {}
+  PPC64BaselineCompiler(CommonRoutineOffsets offs) : offsets{offs} {}
   void Compile(u32 addr, const std::vector<UGeckoInstruction>& instructions);
+  void EmitCommonRoutines();
+  void RelocateAll(u32 offset);
+
+  CommonRoutineOffsets offsets{};
+  std::vector<size_t> relocations;
 
 private:
   enum JumpFlags

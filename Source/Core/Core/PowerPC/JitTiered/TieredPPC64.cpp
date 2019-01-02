@@ -13,7 +13,20 @@
 
 JitTieredPPC64::JitTieredPPC64()
 {
-  codespace.AllocCodeSpace(CODESPACE_CELL_SIZE * CODESPACE_CELLS * 4);
+  PPC64BaselineCompiler compiler;
+  compiler.EmitCommonRoutines();
+  routine_offsets = compiler.offsets;
+  codespace.AllocCodeSpace(CODESPACE_CELL_SIZE * CODESPACE_CELLS + routine_offsets.end);
+  // <= instead of < because we want a copy of the routines at the end
+  for (u32 i = 0; i <= CODESPACE_CELLS / ROUTINES_INTERVAL; ++i)
+  {
+    u32 index = i << 24;
+    INFO_LOG(DYNA_REC, "Installing common routines at offset %x (0x%016" PRIx64 ")", index * 4,
+             u64(codespace.GetPtrAtIndex(index)));
+    codespace.SetOffset(index);
+    codespace.Emit(compiler.instructions);
+  }
+  offset_in_cell = routine_offsets.end;
   for (u32 opcode = 0; opcode < 64; ++opcode)
   {
     toc.fallback_table[opcode] = PPCTables::GetInterpreterOp(opcode << 26);
@@ -53,9 +66,14 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredPPC64::LookupBlock(DispatchCacheE
 
 void JitTieredPPC64::ReclaimCell(u32 cell)
 {
-  auto cell_start = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(CODESPACE_CELL_SIZE * cell));
-  auto cell_end =
-      reinterpret_cast<Executor>(codespace.GetPtrAtIndex(CODESPACE_CELL_SIZE * (cell + 1)));
+  u32 cell_offset = CODESPACE_CELL_SIZE * cell;
+  if (cell % ROUTINES_INTERVAL == 0)
+  {
+    cell_offset += routine_offsets.end;
+  }
+  auto cell_start = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(cell_offset / 4));
+  const u32 end_offset = CODESPACE_CELL_SIZE * (cell + 1);
+  auto cell_end = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(end_offset / 4));
   WARN_LOG(DYNA_REC, "reclaiming Baseline code space cell %u", cell);
   std::unique_lock lock(block_db_mutex);
 
@@ -83,15 +101,15 @@ void JitTieredPPC64::ReclaimCell(u32 cell)
 
 void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
 {
-  PPC64BaselineCompiler compiler;
+  PPC64BaselineCompiler compiler(routine_offsets);
   std::vector<UGeckoInstruction> instructions;
   for (const DecodedInstruction& inst : block.instructions)
   {
     instructions.push_back(UGeckoInstruction(inst.inst));
   }
   compiler.Compile(address, instructions);
-  const u32 len = compiler.instructions.size();
-  if (len > CODESPACE_CELL_SIZE)
+  const u32 len = compiler.instructions.size() * 4;
+  if (len > MAX_BLOCK_SIZE)
   {
     WARN_LOG(DYNA_REC, "Huge block (%u instructions) compiled. Refusing to emit.", len);
     return;
@@ -100,17 +118,17 @@ void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
   {
     current_cell = (current_cell + 1) % CODESPACE_CELLS;
     ReclaimCell(current_cell);
-    codespace.SetOffset(current_cell * CODESPACE_CELL_SIZE);
-    offset_in_cell = 0;
+    offset_in_cell = current_cell % ROUTINES_INTERVAL == 0 ? routine_offsets.end : 0;
   }
-  codespace.Emit(compiler.instructions);
   current_offset = CODESPACE_CELL_SIZE * current_cell + offset_in_cell;
+  codespace.SetOffset(current_offset / 4);
+  compiler.RelocateAll(current_offset);
+  codespace.Emit(compiler.instructions);
   block.offset = current_offset;
-  block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset));
+  block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));
   offset_in_cell += len;
   INFO_LOG(DYNA_REC, "created executable code at 0x%016" PRIx64 " (offset %u, size %zu)",
            u64(block.executor), current_offset, compiler.instructions.size());
-  // CPU::Break();
   std::unique_lock lock(block_db_mutex);
   auto find_result = jit_block_db.find(address);
   if (find_result != jit_block_db.end())

@@ -104,6 +104,14 @@ public:
     HINT_UNPREDICTABLE = 3
   };
 
+  /// flags for direct branches (bx, bcx)
+  enum BranchFlags
+  {
+    BR_NORMAL = 0,
+    BR_LINK = 1,
+    BR_ABSOLUTE = 2
+  };
+
   enum LSUpdate
   {
     NO_UPDATE = 0,
@@ -243,16 +251,18 @@ public:
 
   // === branch ===
   // addr must fit into 26 bits (including sign)
-  void B(s32 addr, bool link, bool absolute = false)
+  FixupBranch B(BranchFlags flags = BR_NORMAL, s32 addr = 0)
   {
     instructions.push_back((18u << 26) | (Common::BitCast<u32>(addr) & 0x3fffffc) |
-                           (static_cast<u32>(absolute) << 1) | static_cast<u32>(link));
+                           (u32(flags) & 3));
+    return instructions.size() - 1;
   }
   // crb < 32 obviously
-  void BC(BranchMode bo, u32 crb, s16 addr, bool link = false, bool absolute = false)
+  FixupBranch BC(BranchMode bo, u32 crb, BranchFlags flags = BR_NORMAL, s16 addr = 0)
   {
     instructions.push_back((16u << 26) | (u32(bo) << 21) | ((crb & 31) << 16) |
-                           u32(Common::BitCast<u16>(addr)) | (u32(absolute) << 1) | u32(link));
+                           (u32(Common::BitCast<u16>(addr)) & 0xfffc) | (u32(flags) & 3));
+    return instructions.size() - 1;
   }
   void BCLR(BranchMode bo = BR_ALWAYS, u32 crb = 0, BranchHint hint = HINT_RETURN,
             bool link = false)
@@ -267,28 +277,21 @@ public:
                            (528u << 1) | u32(link));
   }
 
-  FixupBranch ConditionalBranch(BranchMode bo, u32 crb)
+  void Relocate(FixupBranch branch, s32 delta)
   {
-    instructions.push_back((16u << 26) | (static_cast<u32>(bo) << 21) | ((crb & 31) << 16));
-    return instructions.size() - 1;
-  }
-  FixupBranch Jump()
-  {
-    instructions.push_back(18u << 26);
-    return instructions.size() - 1;
-  }
-  void SetBranchTarget(FixupBranch branch)
-  {
-    u32 opcode = instructions.at(branch) >> 26;
+    u32 inst = instructions.at(branch);
+    u32 opcode = inst >> 26;
     if (opcode == 16)
     {
-      instructions[branch] |= static_cast<s16>((instructions.size() - branch) & 0x1fff) << 2;
+      instructions[branch] = (inst & 0xffff0003) | ((inst + Common::BitCast<u32>(delta)) & 0xfffc);
     }
     else if (opcode == 18)
     {
-      instructions[branch] |= static_cast<s32>((instructions.size() - branch) & 0xfffff) << 2;
+      instructions[branch] =
+          (inst & 0xfc000003) | ((inst + Common::BitCast<u32>(delta)) & 0x3fffffc);
     }
   }
+  void SetBranchTarget(FixupBranch branch) { Relocate(branch, (instructions.size() - branch) * 4); }
 
   // === system registers ===
   // the order of the two 5-bit halves of the spr field is reversed in the encoding
