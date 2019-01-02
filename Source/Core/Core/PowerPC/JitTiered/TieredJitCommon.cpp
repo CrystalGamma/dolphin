@@ -84,6 +84,7 @@ void JitTieredCommon::Run()
     CPUDoReport(false, next_report.instructions.size() >= (1 << 16));
 
     CoreTiming::Advance();
+    PowerPC::CheckExternalExceptions();
 
     do
     {
