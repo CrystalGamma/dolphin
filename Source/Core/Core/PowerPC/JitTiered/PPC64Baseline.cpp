@@ -369,12 +369,12 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     FallbackToInterpreter(inst, opinfo);
     return;
   }
-  bool branch_on_true = inst.BO & BO_BRANCH_IF_TRUE;
-  LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
   bool inverted = false;
   u32 bit = 0;
   if (!(inst.BO & BO_DONT_CHECK_CONDITION))
   {
+    const bool branch_on_true = inst.BO & BO_BRANCH_IF_TRUE;
+    LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
     switch (inst.BI % 4)
     {
     case LT:
