@@ -73,6 +73,8 @@ private:
     return s16(offsetof(PowerPC::PowerPCState, spr) + 4 * i);
   }
 
+  void RestoreRegistersReturn(u32 saved_regs);
+
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
 

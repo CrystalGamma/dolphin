@@ -9,6 +9,12 @@
 
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
+void PPC64BaselineCompiler::RestoreRegistersReturn(u32 saved_regs)
+{
+  ADDI(R1, R1, 32 + 8 * saved_regs);
+  relocations.push_back(B(BR_NORMAL, offsets.restore_gpr_return + (18 - saved_regs) * 4));
+}
+
 void PPC64BaselineCompiler::EmitCommonRoutines()
 {
   // these three are recommended sequences from the ELFv2 spec
@@ -183,7 +189,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
   bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
   LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
-  auto exit_branch = B();
+  RestoreRegistersReturn(saved_regs);
 
   std::vector<FixupBranch> check_exc_exits;
   if (float_check.has_value())
@@ -260,7 +266,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   // store NPC to PC, store downcount
   STW(SCRATCH1, PPCSTATE, OFF_PC);
   LoadUnsignedImmediate(ARG1, 0);
-  SetBranchTarget(exit_branch);
   LD(R29, R1, 32);
   LD(R30, R1, 40);
   LD(R31, R1, 48);
@@ -270,6 +275,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   BCLR();
   return;
 }
+
 void PPC64BaselineCompiler::RelocateAll(u32 offset)
 {
   for (auto branch : relocations)
