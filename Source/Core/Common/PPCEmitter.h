@@ -347,7 +347,7 @@ public:
   void RLDICL(GPR ra, GPR rs, u32 sh, u32 mb, Record rc = NO_RC)
   {
     instructions.push_back((30u << 26) | (u32(rs) << 21) | (u32(ra) << 16) | ((sh & 31) << 11) |
-                           ((mb & 63) << 5) | (0 << 2) | ((sh & 32) >> 4) | u32(rc));
+                           ((mb & 31) << 6) | (mb & 32) | (0 << 2) | ((sh & 32) >> 4) | u32(rc));
   }
 
   std::vector<u32> instructions;
