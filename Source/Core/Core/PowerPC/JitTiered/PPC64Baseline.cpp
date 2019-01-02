@@ -261,12 +261,24 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       MTSPR(SPR_CTR, R12);
       BCCTR();
     }
+    if (jump.flags & JUMPSPR)
+    {
+      LWZ(SCRATCH1, PPCSTATE, SPROffset(jump.address));
+    }
+    else
+    {
+      LoadUnsignedImmediate(SCRATCH1, jump.address);
+    }
+    STW(SCRATCH1, PPCSTATE, OFF_PC);
+    if (jump.flags & LINK)
+    {
+      LoadUnsignedImmediate(SCRATCH2, jump.link_address);
+      STW(SCRATCH2, PPCSTATE, SPROffset(SPR_LR));
+    }
     // decrement *after* skip – important for timing equivalency to Generic
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     ADDI(SCRATCH2, SCRATCH2, -s16(jump.downcount));
     STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    LoadUnsignedImmediate(SCRATCH1, jump.address);
-    STW(SCRATCH1, PPCSTATE, OFF_PC);
     LoadUnsignedImmediate(ARG1, 0);
     RestoreRegistersReturn(saved_regs);
   }

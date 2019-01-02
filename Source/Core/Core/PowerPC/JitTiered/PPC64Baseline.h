@@ -40,7 +40,7 @@ public:
   std::vector<size_t> relocations;
 
 private:
-  enum JumpFlags
+  enum : u32
   {
     JUMP = 0,
     LINK = 1,
@@ -53,7 +53,7 @@ private:
     FixupBranch branch;
     u32 address;
     s32 downcount;
-    JumpFlags flags;
+    u32 flags;
     u32 link_address;
   };
 

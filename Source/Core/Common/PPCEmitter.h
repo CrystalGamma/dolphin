@@ -154,6 +154,11 @@ public:
     instructions.push_back((opcode << 26) | (u32(r1) << 21) | (u32(r2) << 16) | (u32(r3) << 11) |
                            (subop10 << 1));
   }
+  void XLFormInstruction(u32 opcode, u32 bt, u32 ba, u32 bb, u32 subop10)
+  {
+    instructions.push_back((opcode << 26) | ((bt & 31) << 21) | ((ba & 31) << 16) |
+                           ((bb & 31) << 11) | (subop10 << 1));
+  }
 
   // === integer immediate instructions ===
   // do not call on register 0 (use LoadSignedImmediate instead, for clarity)
@@ -244,6 +249,11 @@ public:
   {
     XFormInstruction(31, static_cast<GPR>(bf + l), ra, rb, 0);
   }
+
+  // === CR operations ===
+  void CRAND(u32 bt, u32 ba, u32 bb) { XLFormInstruction(19, bt, ba, bb, 257); }
+  void CRNOR(u32 bt, u32 ba, u32 bb) { XLFormInstruction(19, bt, ba, bb, 33); }
+  void CRANDC(u32 bt, u32 ba, u32 bb) { XLFormInstruction(19, bt, ba, bb, 129); }
 
   // === ≤32-bit load/store ===
   void LWZ(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(32, rt, ra, disp); }
