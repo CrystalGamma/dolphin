@@ -182,6 +182,13 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
       jumps.push_back({BC(BR_TRUE, CR0 + EQ), address - 8, downcount, SKIP, 0});
     }
+    else if (inst.OPCD == 18)
+    {
+      // unconditional branch
+      u32 base = inst.AA ? 0 : address;
+      u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
+      jumps.push_back({B(), target, downcount, inst.LK ? LINK : JUMP, address + 4});
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
@@ -270,6 +277,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       LoadUnsignedImmediate(SCRATCH1, jump.address);
     }
     STW(SCRATCH1, PPCSTATE, OFF_PC);
+    STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
     if (jump.flags & LINK)
     {
       LoadUnsignedImmediate(SCRATCH2, jump.link_address);
