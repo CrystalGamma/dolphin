@@ -254,7 +254,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // check for exceptions
       LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
       ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-      exc_exits.push_back({BC(BR_FALSE, CR0 + EQ), downcount});
+      exits.push_back({BC(BR_FALSE, CR0 + EQ), address, downcount, EXCEPTION, 0});
       // maintain GPR file
       if (is_update)
       {
