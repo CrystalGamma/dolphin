@@ -98,7 +98,7 @@ private:
   u32 address = 0;
   s32 downcount = 0;
 
-  std::vector<Exit> jumps;
+  std::vector<Exit> exits;
   std::vector<JumpExit> jmp_exits;
   std::vector<JumpExit> exc_exits;
 };

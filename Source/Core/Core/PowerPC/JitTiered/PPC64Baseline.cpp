@@ -87,7 +87,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, msr)));
       // test for FP bit
       ANDI_Rc(SCRATCH1, SCRATCH1, 1 << 13);
-      jumps.push_back({BC(BR_TRUE, CR0 + EQ), address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
+      exits.push_back({BC(BR_TRUE, CR0 + EQ), address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
       float_checked = true;
     }
 
@@ -161,7 +161,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       ERROR_LOG(DYNA_REC, "compiling idle skip (wait-on-word) @ %08x", address);
       LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
-      jumps.push_back({BC(BR_TRUE, CR0 + EQ), address - 8, downcount, SKIP, 0});
+      exits.push_back({BC(BR_TRUE, CR0 + EQ), address - 8, downcount, SKIP, 0});
     }
     else if (inst.hex == 0x48000000)
     {
@@ -182,7 +182,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // unconditional branch
       u32 base = inst.AA ? 0 : address;
       u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
-      jumps.push_back({B(), target, downcount, inst.LK ? LINK : JUMP, address + 4});
+      exits.push_back({B(), target, downcount, inst.LK ? LINK : JUMP, address + 4});
     }
     else if (inst.OPCD == 16 || (inst.OPCD == 19 && inst.SUBOP5 == 16))
     {
@@ -302,7 +302,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     RestoreRegistersReturn(saved_regs);
   }
 
-  for (auto jump : jumps)
+  for (auto jump : exits)
   {
     SetBranchTarget(jump.branch);
     if (jump.flags & RAISE_FPU_EXC)
@@ -487,11 +487,11 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     // man, this sign-extension looks ugly
     u32 target = jump_base + Common::BitCast<u32>(s32(Common::BitCast<s16>(u16(inst.BD << 2))));
     INFO_LOG(DYNA_REC, "target: %08x", target);
-    jumps.push_back({branch, target, downcount, inst.LK ? LINK : JUMP, address + 4});
+    exits.push_back({branch, target, downcount, inst.LK ? LINK : JUMP, address + 4});
   }
   else
   {
     u32 reg = inst.SUBOP10 == 16 ? SPR_LR : SPR_CTR;
-    jumps.push_back({branch, reg, downcount, JUMPSPR | (inst.LK ? LINK : JUMP), address + 4});
+    exits.push_back({branch, reg, downcount, JUMPSPR | (inst.LK ? LINK : JUMP), address + 4});
   }
 }
