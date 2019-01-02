@@ -27,7 +27,6 @@ public:
     u32 save_gprs;
     u32 restore_gpr_return;
     u32 restore_gpr;
-    u32 exception_exit;
     u32 end;
   };
   PPC64BaselineCompiler() {}

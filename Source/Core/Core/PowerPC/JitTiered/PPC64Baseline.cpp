@@ -50,28 +50,6 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
   }
   BCLR();
 
-  // this one assumes there is still a stack frame, but all nonvolatile registers have been restored
-  // already
-  offsets.exception_exit = instructions.size() * 4;
-  // call CheckExceptions
-  LD(R12, TOC, s16(s32(offsetof(TableOfContents, check_exceptions)) - 0x4000));
-  MTSPR(SPR_CTR, R12);
-  BCCTR();
-  // clear synchronous exceptions (TODO: check if this is really necessary; Interpreter doesn't do
-  // it, but I've had some bugs when I didn't do it in my code)
-  LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  LoadSignedImmediate(SCRATCH2, s16(Common::BitCast<s32>(~JitTieredGeneric::EXCEPTION_SYNC)));
-  AND(SCRATCH1, SCRATCH1, SCRATCH2);
-  STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  // update PC
-  LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-  // return 0 (no overrun)
-  LoadUnsignedImmediate(ARG1, 0);
-  LD(R1, R1, 0);
-  LD(R0, R1, 16);
-  MTSPR(SPR_LR, R0);
-  BCLR();
-
   offsets.end = instructions.size() * 4;
 }
 
