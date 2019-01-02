@@ -200,7 +200,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
   RestoreRegistersReturn(saved_regs);
 
-  std::vector<FixupBranch> check_exc_exits;
   if (float_check.has_value())
   {
     SetBranchTarget(float_check->branch);
@@ -210,7 +209,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     ADDI(SCRATCH2, SCRATCH2, -s16(float_check->downcount));
     STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    check_exc_exits.push_back(B());
+    LoadUnsignedImmediate(ARG1, 0);
+    RestoreRegistersReturn(saved_regs);
   }
 
   for (auto eexit : exc_exits)
@@ -219,29 +219,9 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
     ADDI(SCRATCH2, SCRATCH2, -s16(eexit.downcount));
     STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    check_exc_exits.push_back(B());
+    LoadUnsignedImmediate(ARG1, 0);
+    RestoreRegistersReturn(saved_regs);
   }
-
-  for (auto branch : check_exc_exits)
-  {
-    SetBranchTarget(branch);
-  }
-  // call CheckExceptions
-  LD(R12, TOC, s16(s32(offsetof(TableOfContents, check_exceptions)) - 0x4000));
-  MTSPR(SPR_CTR, R12);
-  BCCTR();
-  // clear synchronous exceptions (TODO: check if this is really necessary; Interpreter doesn't do
-  // it, but I've had some bugs when I didn't do it in my code)
-  LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  LoadSignedImmediate(SCRATCH2, s16(Common::BitCast<s32>(~JitTieredGeneric::EXCEPTION_SYNC)));
-  AND(SCRATCH1, SCRATCH1, SCRATCH2);
-  STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  // update PC
-  LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-  STW(SCRATCH1, PPCSTATE, OFF_PC);
-  // return 0 (no overrun)
-  LoadUnsignedImmediate(ARG1, 0);
-  RestoreRegistersReturn(saved_regs);
 
   for (auto jexit : jmp_exits)
   {

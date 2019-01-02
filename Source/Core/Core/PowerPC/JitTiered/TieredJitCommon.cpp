@@ -105,6 +105,7 @@ void JitTieredCommon::Run()
       {
         CPUDoReport(flags & REPORT_IMMEDIATELY, true);
       }
+      PowerPC::CheckExceptions();
       PowerPC::CheckBreakPoints();
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
@@ -141,6 +142,7 @@ void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
       // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
       // bloom filters
       auto find_result = jit_block_db.find(start_addr);
+      // Baseline must not erase the entry while it is in dispatch cache
       ASSERT(find_result != jit_block_db.end());
       const std::vector<DecodedInstruction>& instructions = find_result->second.instructions;
       len = instructions.size();
