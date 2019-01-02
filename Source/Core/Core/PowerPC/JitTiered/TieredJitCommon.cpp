@@ -132,12 +132,12 @@ void JitTieredCommon::Run()
 void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
 {
   const u32 start_addr = cache_entry->address;
-  INFO_LOG(DYNA_REC, "baseline block overrun @ %08x", start_addr);
 
   u32 offset = next_report.instructions.size();
   u32 len = 0;
   if (cache_entry->executor != interpreter_executor)
   {
+    INFO_LOG(DYNA_REC, "JIT block overrun @ %08x", start_addr);
     {
       std::lock_guard lock(block_db_mutex);
       // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with

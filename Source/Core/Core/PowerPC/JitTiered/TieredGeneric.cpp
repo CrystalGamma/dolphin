@@ -34,7 +34,7 @@ void JitTieredGeneric::InvalidateICache(const u32 address, const u32 size, const
     return;  // zero-sized invalidations don't have a 'last invalidated byte' so exit early
   }
   const u32 end = address + size - 1;
-  // INFO_LOG(DYNA_REC, "%08x: invalidate %08x–%08x", PC, address, end);
+  DEBUG_LOG(DYNA_REC, "%08x: invalidate %08x–%08x", PC, address, end);
   Bloom new_bloom = BloomRange(address, end);
   next_report.invalidation_bloom |= new_bloom;
   next_report.invalidations.push_back({address, end});
@@ -48,13 +48,13 @@ void JitTieredGeneric::InvalidateICache(const u32 address, const u32 size, const
     {
       if (overlaps(entry.address, entry.length * 4, address, end))
       {
-        INFO_LOG(DYNA_REC, "removing simple block @ %08x", entry.address);
+        DEBUG_LOG(DYNA_REC, "removing simple block @ %08x", entry.address);
         entry.Invalidate();
       }
     }
     else
     {
-      INFO_LOG(DYNA_REC, "removing optimized block @ %08x", entry.address);
+      DEBUG_LOG(DYNA_REC, "removing optimized block @ %08x", entry.address);
       entry.Invalidate();
     }
   }
@@ -90,8 +90,8 @@ void JitTieredGeneric::CompactInterpreterBlocks(BaselineReport* const report,
       else
       {
         // block is old (or empty) and will disappear with this compaction ⇒ invalidate
-        INFO_LOG(DYNA_REC, "compacting away block @ %08x (used %u times)", entry.address,
-                 entry.usecount);
+        DEBUG_LOG(DYNA_REC, "compacting away block @ %08x (used %u times)", entry.address,
+                  entry.usecount);
         entry.Invalidate();
       }
     }
@@ -161,7 +161,7 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredGeneric::FindBlock(const u32 addr
         }
         clock = (clock + 1) % VICTIM_WAYS;
       }
-      WARN_LOG(DYNA_REC, "%08x: evict %08x", PC, dispatch_cache.at(pos).address);
+      INFO_LOG(DYNA_REC, "%08x: evict %08x", PC, dispatch_cache.at(pos).address);
       victim_clocks.at(victim_set) = clock;
       dispatch_cache.at(pos) = primary_entry;
       victim_second_chance.set(pos - DISP_PRIMARY_CACHE_SIZE);
@@ -179,7 +179,7 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredGeneric::LookupBlock(DispatchCach
                                                                     const u32 address)
 {
   // we have no JIT to get blocks from, so just create new interpreter block unconditionally
-  INFO_LOG(DYNA_REC, "%08x: new block", address);
+  DEBUG_LOG(DYNA_REC, "%08x: new block", address);
   entry->address = address;
   if (next_report.instructions.empty())
   {
