@@ -22,6 +22,9 @@ public:
     void (*store_word)(u32 val, u32 addr);
     u8 (*load_byte)(u32 addr);
     void (*store_byte)(u8 val, u32 addr);
+    u16 (*load_hword)(u32 addr);
+    s16 (*load_hword_sext)(u32 addr);
+    void (*store_hword)(u16 val, u32 addr);
     std::array<void (*)(UGeckoInstruction), 64 + 4 * 1024 + 32> fallback_table;
   };
   struct CommonRoutineOffsets

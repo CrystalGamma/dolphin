@@ -12,6 +12,11 @@
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
 #include "Core/PowerPC/MMU.h"
 
+static s16 LoadHWord_SExt(u32 addr)
+{
+  return Common::BitCast<s16>(PowerPC::Read_U16(addr));
+}
+
 JitTieredPPC64::JitTieredPPC64()
 {
   PPC64BaselineCompiler compiler;
@@ -52,6 +57,9 @@ JitTieredPPC64::JitTieredPPC64()
   toc.store_word = PowerPC::Write_U32;
   toc.load_byte = PowerPC::Read_U8;
   toc.store_byte = PowerPC::Write_U8;
+  toc.load_hword = PowerPC::Read_U16;
+  toc.store_hword = PowerPC::Write_U16;
+  toc.load_hword_sext = LoadHWord_SExt;
   current_toc = next_toc = &toc;
   on_thread_baseline = false;
 }

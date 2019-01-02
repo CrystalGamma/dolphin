@@ -186,7 +186,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     {
       BCX(inst, *opinfo);
     }
-    else if (inst.OPCD >= 32 && inst.OPCD <= 39)
+    else if (inst.OPCD >= 32 && inst.OPCD <= 45)
     {
       // D-Form load/stores
       bool is_store = inst.OPCD & 4;
@@ -205,6 +205,15 @@ void PPC64BaselineCompiler::Compile(u32 addr,
         break;
       case 38:
         offset = s16(offsetof(TableOfContents, store_byte) - 0x4000);
+        break;
+      case 40:
+        offset = s16(offsetof(TableOfContents, load_hword) - 0x4000);
+        break;
+      case 42:
+        offset = s16(offsetof(TableOfContents, load_hword_sext) - 0x4000);
+        break;
+      case 44:
+        offset = s16(offsetof(TableOfContents, store_hword) - 0x4000);
         break;
       default:
         ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
