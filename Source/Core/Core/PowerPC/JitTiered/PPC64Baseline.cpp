@@ -174,7 +174,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     }
     else if (inst.hex == 0x4182fff8 && index >= 2 &&
              (guest_instructions[index - 2].hex >> 16) == 0x800d &&
-             guest_instructions[index - 1].hex == 0x28000000)
+             (guest_instructions[index - 1].hex & 0xfbffffff) == 0x28000000)
     {
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip (wait-on-word) @ %08x", address);
