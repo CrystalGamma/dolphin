@@ -68,6 +68,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   MoveReg(PPCSTATE, R5);
   ADDI(TOC, R6, 0x4000);
 
+  bool float_checked = false;
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
   for (u32 index = 0; index < guest_instructions.size(); ++index)
   {
@@ -81,12 +82,13 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
     // decrement downcount (buffered)
     downcount += opinfo->numCycles;
-    if (opinfo->flags & FL_USE_FPU && !float_check.has_value())
+    if (opinfo->flags & FL_USE_FPU && !float_checked)
     {
       LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, msr)));
       // test for FP bit
       ANDI_Rc(SCRATCH1, SCRATCH1, 1 << 13);
-      float_check = {BC(BR_TRUE, CR0 + EQ), downcount};
+      jumps.push_back({BC(BR_TRUE, CR0 + EQ), address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
+      float_checked = true;
     }
 
     if (inst.OPCD == 14 || inst.OPCD == 15)
@@ -279,19 +281,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
   RestoreRegistersReturn(saved_regs);
 
-  if (float_check.has_value())
-  {
-    SetBranchTarget(float_check->branch);
-    LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-    ORI(SCRATCH1, SCRATCH1, u16(EXCEPTION_FPU_UNAVAILABLE));
-    STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(float_check->downcount));
-    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    LoadUnsignedImmediate(ARG1, 0);
-    RestoreRegistersReturn(saved_regs);
-  }
-
   for (auto eexit : exc_exits)
   {
     SetBranchTarget(eexit.branch);
@@ -316,6 +305,12 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   for (auto jump : jumps)
   {
     SetBranchTarget(jump.branch);
+    if (jump.flags & RAISE_FPU_EXC)
+    {
+      LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+      ORI(SCRATCH1, SCRATCH1, u16(EXCEPTION_FPU_UNAVAILABLE));
+      STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+    }
     if (jump.flags & SKIP)
     {
       // call CoreTiming::Idle
@@ -332,6 +327,10 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       LoadUnsignedImmediate(SCRATCH1, jump.address);
     }
     STW(SCRATCH1, PPCSTATE, OFF_PC);
+    if (jump.flags & EXCEPTION)
+    {
+      ADDI(SCRATCH1, SCRATCH1, 4);
+    }
     STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
     if (jump.flags & LINK)
     {

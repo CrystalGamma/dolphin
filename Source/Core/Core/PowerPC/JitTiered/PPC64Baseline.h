@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <optional>
 #include <vector>
 
 #include "Common/PPCEmitter.h"
@@ -50,6 +49,8 @@ private:
     LINK = 1,
     SKIP = 2,
     JUMPSPR = 4,
+    EXCEPTION = 8,
+    RAISE_FPU_EXC = 16
   };
 
   struct Exit
@@ -100,5 +101,4 @@ private:
   std::vector<Exit> jumps;
   std::vector<JumpExit> jmp_exits;
   std::vector<JumpExit> exc_exits;
-  std::optional<JumpExit> float_check;
 };
