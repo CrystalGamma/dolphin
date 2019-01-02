@@ -10,6 +10,7 @@
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
+#include "Core/PowerPC/MMU.h"
 
 JitTieredPPC64::JitTieredPPC64()
 {
@@ -46,9 +47,11 @@ JitTieredPPC64::JitTieredPPC64()
     toc.fallback_table[64 + 4 * 1024 + subop] =
         PPCTables::GetInterpreterOp((59u << 26) | (subop << 1));
   }
-  toc.check_exceptions = PowerPC::CheckExceptions;
-  toc.check_external_exceptions = PowerPC::CheckExternalExceptions;
   toc.idle = CoreTiming::Idle;
+  toc.load_word = PowerPC::Read_U32;
+  toc.store_word = PowerPC::Write_U32;
+  toc.load_byte = PowerPC::Read_U8;
+  toc.store_byte = PowerPC::Write_U8;
   current_toc = next_toc = &toc;
   on_thread_baseline = false;
 }

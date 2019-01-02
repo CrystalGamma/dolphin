@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <optional>
 
+#include "Common/Assert.h"
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
 void PPC64BaselineCompiler::RestoreRegistersReturn(u32 saved_regs)
@@ -184,6 +185,75 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     else if (inst.OPCD == 16 || (inst.OPCD == 19 && inst.SUBOP5 == 16))
     {
       BCX(inst, *opinfo);
+    }
+    else if (inst.OPCD >= 32 && inst.OPCD <= 39)
+    {
+      // D-Form load/stores
+      bool is_store = inst.OPCD & 4;
+      bool is_update = inst.OPCD & 1;
+      s16 offset = 0;
+      switch (inst.OPCD & 62)
+      {
+      case 32:
+        offset = s16(offsetof(TableOfContents, load_word) - 0x4000);
+        break;
+      case 36:
+        offset = s16(offsetof(TableOfContents, store_word) - 0x4000);
+        break;
+      case 34:
+        offset = s16(offsetof(TableOfContents, load_byte) - 0x4000);
+        break;
+      case 38:
+        offset = s16(offsetof(TableOfContents, store_byte) - 0x4000);
+        break;
+      default:
+        ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
+      }
+      ASSERT(offset != 0);
+      if (inst.RA != 0)
+      {
+        // calculate address
+        LWZ(SAVED1, PPCSTATE, GPROffset(inst.RA));
+        ADDI(SAVED1, SAVED1, inst.SIMM_16);
+        RLDICL(SAVED1, SAVED1, 0, 32);
+      }
+      else
+      {
+        ASSERT(!is_update);
+        LoadUnsignedImmediate(SAVED1, Common::BitCast<u32>(s32(inst.SIMM_16)));
+      }
+      // call the MMU function
+      LD(R12, TOC, offset);
+      if (!is_store)
+      {
+        MoveReg(ARG1, SAVED1);
+      }
+      else
+      {
+        LWZ(ARG1, PPCSTATE, GPROffset(inst.RD));
+        if ((inst.OPCD & 30) == 38)
+        {
+          // make sure it's properly zero-extended
+          RLDICL(ARG1, ARG1, 0, 56);
+        }
+        MoveReg(ARG2, SAVED1);
+      }
+      MTSPR(SPR_CTR, R12);
+      BCCTR();
+      // check for exceptions
+      LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+      ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
+      exc_exits.push_back({BC(BR_FALSE, CR0 + EQ), downcount});
+      // maintain GPR file
+      if (is_update)
+      {
+        ASSERT(is_store || inst.RA != inst.RD);
+        STW(SAVED1, PPCSTATE, GPROffset(inst.RA));
+      }
+      if (!is_store)
+      {
+        STW(ARG1, PPCSTATE, GPROffset(inst.RD));
+      }
     }
     else
     {

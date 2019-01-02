@@ -17,9 +17,11 @@ class PPC64BaselineCompiler final : public PPCEmitter
 public:
   struct TableOfContents
   {
-    void (*check_exceptions)();
-    void (*check_external_exceptions)();
     void (*idle)();
+    u32 (*load_word)(u32 addr);
+    void (*store_word)(u32 val, u32 addr);
+    u8 (*load_byte)(u32 addr);
+    void (*store_byte)(u8 val, u32 addr);
     std::array<void (*)(UGeckoInstruction), 64 + 4 * 1024 + 32> fallback_table;
   };
   struct CommonRoutineOffsets
@@ -84,6 +86,7 @@ private:
   static constexpr GPR SCRATCH2 = R8;
   static constexpr GPR SAVED1 = R31;
   static constexpr GPR ARG1 = R3;
+  static constexpr GPR ARG2 = R4;
   static constexpr s16 OFF_PC = s16(offsetof(PowerPC::PowerPCState, pc));
   static constexpr s16 OFF_DOWNCOUNT = s16(offsetof(PowerPC::PowerPCState, downcount));
   static constexpr s16 OFF_EXCEPTIONS = s16(offsetof(PowerPC::PowerPCState, Exceptions));
