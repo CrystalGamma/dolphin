@@ -181,9 +181,9 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     {
       BCX(inst, *opinfo);
     }
-    else if (inst.OPCD >= 32 && inst.OPCD <= 45)
+    else if ((inst.OPCD >= 32 && inst.OPCD <= 45) || (inst.OPCD == 31 && inst.SUBOP5 == 23))
     {
-      DFormLoadStore(inst, *opinfo);
+      LoadStore(inst, *opinfo);
     }
     else
     {
@@ -423,33 +423,47 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
   }
 }
 
-void PPC64BaselineCompiler::DFormLoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo)
+void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  // D-Form load/stores
-  bool is_store = inst.OPCD & 4;
-  bool is_update = inst.OPCD & 1;
-  s16 offset = 0;
-  switch (inst.OPCD & 62)
+  u32 op;
+  const bool is_indexed = inst.OPCD == 31;
+  if (is_indexed)
   {
-  case 32:
+    op = inst.SUBOP10 >> 5;
+  }
+  else
+  {
+    op = inst.OPCD - 32;
+  }
+  if (op > 13)
+  {
+    FallbackToInterpreter(inst, opinfo);
+    return;
+  }
+  const bool is_store = op & 4;
+  const bool is_update = op & 1;
+  s16 offset = 0;
+  switch (op >> 1)
+  {
+  case 0:
     offset = s16(offsetof(TableOfContents, load_word) - 0x4000);
     break;
-  case 36:
-    offset = s16(offsetof(TableOfContents, store_word) - 0x4000);
-    break;
-  case 34:
+  case 1:
     offset = s16(offsetof(TableOfContents, load_byte) - 0x4000);
     break;
-  case 38:
+  case 2:
+    offset = s16(offsetof(TableOfContents, store_word) - 0x4000);
+    break;
+  case 3:
     offset = s16(offsetof(TableOfContents, store_byte) - 0x4000);
     break;
-  case 40:
+  case 4:
     offset = s16(offsetof(TableOfContents, load_hword) - 0x4000);
     break;
-  case 42:
+  case 5:
     offset = s16(offsetof(TableOfContents, load_hword_sext) - 0x4000);
     break;
-  case 44:
+  case 6:
     offset = s16(offsetof(TableOfContents, store_hword) - 0x4000);
     break;
   default:
@@ -460,13 +474,28 @@ void PPC64BaselineCompiler::DFormLoadStore(UGeckoInstruction inst, GekkoOPInfo& 
   {
     // calculate address
     LWZ(SAVED1, PPCSTATE, GPROffset(inst.RA));
-    ADDI(SAVED1, SAVED1, inst.SIMM_16);
+    if (is_indexed)
+    {
+      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RB));
+      ADD(SAVED1, SAVED1, SCRATCH1);
+    }
+    else
+    {
+      ADDI(SAVED1, SAVED1, inst.SIMM_16);
+    }
     RLDICL(SAVED1, SAVED1, 0, 32);
   }
   else
   {
     ASSERT(!is_update);
-    LoadUnsignedImmediate(SAVED1, Common::BitCast<u32>(s32(inst.SIMM_16)));
+    if (is_indexed)
+    {
+      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RB));
+    }
+    else
+    {
+      LoadUnsignedImmediate(SAVED1, Common::BitCast<u32>(s32(inst.SIMM_16)));
+    }
   }
   // call the MMU function
   LD(R12, TOC, offset);
@@ -477,10 +506,14 @@ void PPC64BaselineCompiler::DFormLoadStore(UGeckoInstruction inst, GekkoOPInfo& 
   else
   {
     LWZ(ARG1, PPCSTATE, GPROffset(inst.RD));
-    if ((inst.OPCD & 30) == 38)
+    // make sure it's properly zero-extended
+    if ((op >> 1) == 3)
     {
-      // make sure it's properly zero-extended
       RLDICL(ARG1, ARG1, 0, 56);
+    }
+    else if ((op >> 1) == 6)
+    {
+      RLDICL(ARG1, ARG1, 0, 48);
     }
     MoveReg(ARG2, SAVED1);
   }

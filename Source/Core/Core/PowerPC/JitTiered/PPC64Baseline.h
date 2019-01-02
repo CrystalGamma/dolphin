@@ -85,7 +85,7 @@ private:
 
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
-  void DFormLoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo);
+  void LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo);
 
   static constexpr GPR PPCSTATE = R30;
   static constexpr GPR TOC = R29;
