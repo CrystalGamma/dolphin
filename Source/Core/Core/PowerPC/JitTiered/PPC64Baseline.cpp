@@ -177,10 +177,24 @@ void PPC64BaselineCompiler::Compile(u32 addr,
              guest_instructions[index - 1].hex == 0x28000000)
     {
       // idle skip as detected in Interpreter
-      ERROR_LOG(DYNA_REC, "compiling idle skip @ %08x", address);
+      ERROR_LOG(DYNA_REC, "compiling idle skip (wait-on-word) @ %08x", address);
       LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
       jumps.push_back({BC(BR_TRUE, CR0 + EQ), address - 8, downcount, SKIP, 0});
+    }
+    else if (inst.hex == 0x48000000)
+    {
+      // idle skip as detected in Interpreter
+      ERROR_LOG(DYNA_REC, "compiling idle skip (empty loop) @ %08x", address);
+      // call CoreTiming::Idle
+      LD(R12, TOC, s16(s32(offsetof(TableOfContents, idle)) - 0x4000));
+      MTSPR(SPR_CTR, R12);
+      BCCTR();
+      LoadUnsignedImmediate(SCRATCH1, address);
+      STW(SCRATCH1, PPCSTATE, OFF_PC);
+      STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+      LoadSignedImmediate(ARG1, 0);
+      RestoreRegistersReturn(saved_regs);
     }
     else if (inst.OPCD == 18)
     {
