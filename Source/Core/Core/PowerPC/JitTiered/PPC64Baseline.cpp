@@ -365,8 +365,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
   if ((inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
   {
-    FallbackToInterpreter(inst, opinfo);
-    return;
+    WARN_LOG(DYNA_REC, "CR+CTR branch %08x @ %08x", inst.hex, address);
   }
   bool inverted = false;
   u32 bit = 0;
@@ -389,7 +388,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
       bit = CR0 + GT;
       break;
     case EQ:
-      WARN_LOG(DYNA_REC, "EQ branch @ %08x", address);
+      INFO_LOG(DYNA_REC, "EQ branch @ %08x", address);
       CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
       inverted = !branch_on_true;
       bit = CR0 + EQ;
