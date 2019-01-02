@@ -203,6 +203,10 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
       jumps.push_back({B(), target, downcount, inst.LK ? LINK : JUMP, address + 4});
     }
+    else if (inst.OPCD == 16 || (inst.OPCD == 19 && inst.SUBOP5 == 16))
+    {
+      BCX(inst, *opinfo);
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
@@ -355,4 +359,93 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
   CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
   jmp_exits.push_back({BC(BR_FALSE, CR0 + EQ), downcount});
+}
+
+void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
+{
+  FallbackToInterpreter(inst, opinfo);
+  return;
+  bool branch_on_true = inst.BO & BO_BRANCH_IF_TRUE;
+  LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
+  bool inverted = false;
+  u32 bit = 0;
+  if (!(inst.BO & BO_DONT_CHECK_CONDITION))
+  {
+    switch (inst.BI % 4)
+    {
+    case LT:
+      INFO_LOG(DYNA_REC, "LT branch");
+      RLDICL(SCRATCH1, SCRATCH1, 2, 63, RC);
+      inverted = !branch_on_true;
+      bit = CR0 + EQ;
+      break;
+    case GT:
+      INFO_LOG(DYNA_REC, "GT branch");
+      CMPI(CR0, CMP_DWORD, SCRATCH1, 0);
+      inverted = branch_on_true;
+      bit = CR0 + GT;
+      break;
+    case EQ:
+      INFO_LOG(DYNA_REC, "EQ branch");
+      CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
+      inverted = branch_on_true;
+      bit = CR0 + EQ;
+      break;
+    case SO:
+      TW();
+      RLDICL(SCRATCH1, SCRATCH1, 3, 63, RC);
+      inverted = branch_on_true;
+      bit = CR0 + EQ;
+    }
+  }
+  if (!(inst.BO & BO_DONT_DECREMENT_FLAG))
+  {
+    LWZ(SCRATCH1, PPCSTATE, SPROffset(SPR_CTR));
+    ADDI(SCRATCH1, SCRATCH1, -1);
+    STW(SCRATCH1, PPCSTATE, SPROffset(SPR_CTR));
+    CMPLI(CR1, CMP_WORD, SCRATCH1, 0);
+    bool branch_on_zero = inst.BO & BO_BRANCH_IF_CTR_0;
+    if (inst.BO & BO_DONT_CHECK_CONDITION)
+    {
+      bit = CR1 + EQ;
+      inverted = branch_on_zero;
+    }
+    else if (!inverted && branch_on_zero)
+    {
+      CRAND(bit, CR1 + EQ, bit);
+    }
+    else if (branch_on_zero)
+    {
+      CRANDC(bit, CR1 + EQ, bit);
+    }
+    else if (!inverted)
+    {
+      CRANDC(bit, bit, CR1 + EQ);
+    }
+    else
+    {
+      CRNOR(bit, bit, CR1 + EQ);
+    }
+  }
+  FixupBranch branch;
+  if ((inst.BO & ~(BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
+  {
+    branch = B();
+  }
+  else
+  {
+    branch = BC(inverted ? BR_FALSE : BR_TRUE, bit);
+  }
+  if (inst.OPCD == 16)
+  {
+    u32 jump_base = inst.AA ? 0 : address;
+    // man, this sign-extension looks ugly
+    u32 target = jump_base + Common::BitCast<u32>(s32(Common::BitCast<s16>(u16(inst.BD << 2))));
+    jumps.push_back({branch, target, downcount, inst.LK ? LINK : JUMP, address + 4});
+  }
+  else
+  {
+    u32 reg = inst.SUBOP10 == 16 ? SPR_LR : SPR_CTR;
+    jumps.push_back({branch, reg, downcount, JUMPSPR | (inst.LK ? LINK : JUMP), address + 4});
+  }
 }
