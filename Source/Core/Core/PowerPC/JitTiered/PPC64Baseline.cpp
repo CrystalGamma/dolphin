@@ -363,7 +363,8 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  if (!(inst.BO & BO_DONT_CHECK_CONDITION))
+  if ((!(inst.BO & BO_DONT_CHECK_CONDITION) && inst.BI % 4 != EQ) ||
+      (inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
   {
     FallbackToInterpreter(inst, opinfo);
     return;
