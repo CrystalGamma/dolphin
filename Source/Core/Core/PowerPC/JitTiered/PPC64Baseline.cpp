@@ -229,7 +229,10 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
   // update PC
   LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-  auto exc_jump = B();
+  STW(SCRATCH1, PPCSTATE, OFF_PC);
+  // return 0 (no overrun)
+  LoadUnsignedImmediate(ARG1, 0);
+  RestoreRegistersReturn(saved_regs);
 
   for (auto jexit : jmp_exits)
   {
@@ -261,19 +264,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     LoadUnsignedImmediate(ARG1, 0);
     RestoreRegistersReturn(saved_regs);
   }
-  STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  SetBranchTarget(exc_jump);
-  // store NPC to PC, store downcount
-  STW(SCRATCH1, PPCSTATE, OFF_PC);
-  LoadUnsignedImmediate(ARG1, 0);
-  LD(R29, R1, 32);
-  LD(R30, R1, 40);
-  LD(R31, R1, 48);
-  ADDI(R1, R1, 56);
-  LD(R0, R1, 16);
-  MTSPR(SPR_LR, R0);
-  BCLR();
-  return;
 }
 
 void PPC64BaselineCompiler::RelocateAll(u32 offset)
