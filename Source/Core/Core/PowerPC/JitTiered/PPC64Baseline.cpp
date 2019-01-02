@@ -163,22 +163,14 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     {
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip (empty loop) @ %08x", address);
-      // call CoreTiming::Idle
-      LD(R12, TOC, s16(s32(offsetof(TableOfContents, idle)) - 0x4000));
-      MTSPR(SPR_CTR, R12);
-      BCCTR();
-      LoadUnsignedImmediate(SCRATCH1, address);
-      STW(SCRATCH1, PPCSTATE, OFF_PC);
-      STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-      LoadSignedImmediate(ARG1, 0);
-      RestoreRegistersReturn(saved_regs);
+      WriteExit({address, downcount, SKIP, 0});
     }
     else if (inst.OPCD == 18)
     {
       // unconditional branch
       u32 base = inst.AA ? 0 : address;
       u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
-      exits.emplace_back(B(), Exit{target, downcount, inst.LK ? LINK : JUMP, address + 4});
+      WriteExit({target, downcount, inst.LK ? LINK : JUMP, address + 4});
     }
     else if (inst.OPCD == 16 || (inst.OPCD == 19 && inst.SUBOP5 == 16))
     {
