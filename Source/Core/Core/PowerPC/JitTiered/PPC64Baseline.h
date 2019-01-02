@@ -55,7 +55,6 @@ private:
 
   struct Exit
   {
-    FixupBranch branch;
     u32 address;
     s32 downcount;
     u32 flags;
@@ -82,8 +81,11 @@ private:
   void RestoreRegisters(u32 saved_regs);
   void RestoreRegistersReturn(u32 saved_regs);
 
+  void WriteExit(const Exit& jump);
+
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
+  void DFormLoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo);
 
   static constexpr GPR PPCSTATE = R30;
   static constexpr GPR TOC = R29;
@@ -99,6 +101,6 @@ private:
   u32 address = 0;
   s32 downcount = 0;
 
-  std::vector<Exit> exits;
+  std::vector<std::pair<FixupBranch, Exit>> exits;
   std::vector<FallbackExit> fallback_exits;
 };
