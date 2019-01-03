@@ -64,7 +64,7 @@ void RegisterCache::BindGPR(GPR host_gpr, u16 specifier)
   ASSERT((specifier & 96) != 0);
   u8 reg = specifier & 31;
   // catch (some) invalidated registers
-  ASSERT(reg_state[host_gpr] == SCRATCH ||
+  ASSERT(reg_state[host_gpr] == SCRATCH || reg_state[host_gpr] == LOCKED ||
          (HoldsGuestRegister(host_gpr) && GetGuestRegister(host_gpr) == reg));
   // invalidate any other values for the same guest register
   for (u16& rs : reg_state)

@@ -66,7 +66,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
                                     const std::vector<UGeckoInstruction>& guest_instructions)
 {
   address = addr;
-  gpr_state = GPRState();
+  reg_cache = RegisterCache();
   reg_cache.EstablishStackFrame(this);
 
   bool float_checked = false;
@@ -114,14 +114,14 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     else if (inst.OPCD >= 24 && inst.OPCD <= 29)
     {
       // ori(s), xori(s), andi(s).
-      const GPR reg = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
-      const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
-      DFormInstruction(inst.OPCD, scratch, reg, inst.UIMM);
+      const GPR rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+      const GPR ra = reg_cache.GetGPR(this, SCRATCH);
+      DFormInstruction(inst.OPCD, rs, ra, inst.UIMM);
       // could use ZEXT_R for andi(s)., but setting CR0 involves sign extension anyway
-      reg_cache.BindGPR(scratch, DIRTY_R + inst.RA);
+      reg_cache.BindGPR(ra, DIRTY_R + inst.RA);
       if (inst.OPCD == 28 || inst.OPCD == 29)
       {
-        SetCR0(&gpr_state, scratch);
+        reg_cache.SetCR0(this, ra);
       }
     }
     else if (inst.OPCD == 7)
@@ -226,13 +226,15 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       FallbackToInterpreter(inst, *opinfo);
     }
     reg_cache.ReleaseRegisters();
-    reg_cache.FlushAllRegisters();
+    reg_cache.FlushAllRegisters(this);
     reg_cache.InvalidateAllRegisters();
     address += 4;
   }
   if (!omit_epilogue)
   {
-    GPR scratch = reg_cache.GetGPR(this, SCRATCH) LoadUnsignedImmediate(scratch, address);
+    GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
+    GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+    LoadUnsignedImmediate(scratch, address);
     STW(scratch, ppcs, OFF_PC);
     STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
     LWZ(scratch, ppcs, OFF_DOWNCOUNT);
@@ -271,7 +273,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 
 void PPC64BaselineCompiler::WriteExit(const Exit& jump)
 {
-  RegisterCache& rc = jump.reg_cache;
+  RegisterCache rc = jump.reg_cache;
   GPR ppcs = rc.GetGPR(this, PPCSTATE_PTR);
   GPR scratch = rc.GetGPR(this, SCRATCH);
   if (jump.flags & RAISE_FPU_EXC)
@@ -332,7 +334,7 @@ void PPC64BaselineCompiler::RelocateAll(u32 offset)
 void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
   // fallbacks may do anything with the guest registers, so empty the cache
-  reg_cache.FlushAllRegisters();
+  reg_cache.FlushAllRegisters(this);
   reg_cache.InvalidateAllRegisters();
   GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
   GPR scratch = reg_cache.GetGPR(this, SCRATCH);
@@ -381,10 +383,10 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   // allocate scratch register before branch, so we can use the same exit block
   GPR scratch2 = reg_cache.GetGPR(this, SCRATCH);
   auto exc_exit = BC(BR_FALSE, CR0 + EQ);
-  // load NPC into SCRATCH1 and return if it's ≠ PC + 4
+  // load NPC into scratch and return if it's ≠ PC + 4
   LWZ(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
-  XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
-  CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
+  XORIS(scratch2, scratch, u16((address + 4) >> 16));
+  CMPLI(CR0, CMP_WORD, scratch2, u16((address + 4) & 0xffff));
   auto jump_exit = BC(BR_FALSE, CR0 + EQ);
   fallback_exits.push_back({reg_cache, scratch, jump_exit, exc_exit, downcount});
 }
@@ -545,7 +547,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   const GPR target = reg_cache.PrepareCall(this, is_store ? 2 : 1);
   const GPR toc = reg_cache.GetGPR(this, TOC_PTR);
   // TODO: allocate this register more smartly to eliminate moves
-  const GPR addr_reg = reg_cache.GetGPR(this, is_update ? SAVED : SCRATCH);
+  const GPR addr_reg = reg_cache.GetGPR(this, is_update ? LOCKED : SCRATCH);
   if (inst.RA != 0)
   {
     // calculate address

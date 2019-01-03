@@ -65,6 +65,8 @@ private:
 
   struct FallbackExit
   {
+    PPC64RegCache::RegisterCache reg_cache;
+    GPR pc;
     FixupBranch store_pc;
     FixupBranch leave_pc;
     s32 downcount;
