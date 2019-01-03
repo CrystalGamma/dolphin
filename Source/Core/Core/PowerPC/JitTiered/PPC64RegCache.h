@@ -54,7 +54,7 @@ struct RegisterCache
     // register 1 is always the stack pointer
     reg_state[1] = RESERVED;
     // register 2 is supposed to be the TOC pointer, but it's just a volatile register AFAICS
-    reg_state[2] = FREE;
+    reg_state[2] = RESERVED;
     // register 3 is the first argument, starts out as the JIT pointer, which we don't use
     reg_state[3] = FREE;
     // register 4 is the second argument, starts out as the offset value from the block DB (not used

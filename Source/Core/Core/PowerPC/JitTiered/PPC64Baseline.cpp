@@ -65,7 +65,6 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
 void PPC64BaselineCompiler::Compile(u32 addr,
                                     const std::vector<UGeckoInstruction>& guest_instructions)
 {
-  TW();
   address = addr;
   reg_cache = RegisterCache();
   reg_cache.EstablishStackFrame(this);
@@ -255,7 +254,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     SetBranchTarget(fexit.leave_pc);
     fexit.reg_cache.ReleaseRegisters();
 
-    GPR scratch = fexit.reg_cache.GetGPR(this, SCRATCH);
+    GPR scratch = fexit.reg_cache.GetScratch(this);
     LWZ(scratch, ppcs, OFF_DOWNCOUNT);
     ADDI(scratch, scratch, -s16(fexit.downcount));
     STW(scratch, ppcs, OFF_DOWNCOUNT);

@@ -30,7 +30,7 @@ void RegisterCache::EstablishStackFrame(PPC64BaselineCompiler* comp)
   reg_state[5] = FREE;
   reg_state[31] = PPCSTATE_PTR;
   comp->ADDI(PPCEmitter::R30, PPCEmitter::R6, 0x4000);
-  reg_state[5] = FREE;
+  reg_state[6] = FREE;
   reg_state[30] = TOC_PTR;
 
   reg_state[29] = FREE;
@@ -108,7 +108,7 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
   for (u8 i = 0; i < 32; ++i)
   {
     const u16 state = reg_state[i];
-    if ((state & 31) == reg)
+    if ((state & 96) != 0 && (state & 31) == reg)
     {
       GPR res = static_cast<GPR>(i);
       if (want_state != DIRTY_R && want_state != (state & 96))
@@ -123,7 +123,8 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
           emit->EXTSW(res, res);
         }
       }
-      reg_state[i] |= (specifier & FLAG_GUEST_UNSAVED) | FLAG_IN_USE;
+      reg_state[i] |= specifier | FLAG_IN_USE | (reg_state[i] & FLAG_GUEST_UNSAVED);
+      INFO_LOG(DYNA_REC, "reusing 0x%x in %u", u32(reg_state[i]), u32(i));
       return res;
     }
     if (!found_vacancy)
@@ -179,7 +180,7 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
 GPR RegisterCache::GetScratch(PPCEmitter* emit, u16 specifier)
 {
   ASSERT(specifier == SCRATCH || specifier == LOCKED);
-  const u8 start_search = specifier == SCRATCH ? 2 : 14;
+  const u8 start_search = specifier == SCRATCH ? 0 : 14;
   const u8 end_search = specifier == SCRATCH ? 13 : 32;
   bool found_vacancy = false;
   bool found_clean = false;
@@ -294,8 +295,16 @@ GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
     {
       FlushHostRegister(emit, reg);
     }
-    reg_state[i] = ABI_FREE;
+    else
+    {
+      reg_state[i] = FREE;
+    }
   }
+  if (HoldsGuestRegister(PPCEmitter::R12))
+  {
+    FlushHostRegister(emit, PPCEmitter::R12);
+  }
+  reg_state[12] = SCRATCH;
   return PPCEmitter::R12;
 }
 
@@ -307,17 +316,19 @@ void RegisterCache::BindCall(PPCEmitter* emit)
 void RegisterCache::PerformCall(PPCEmitter* emit, u8 num_return_gprs)
 {
   ASSERT(num_return_gprs < 10);
+  for (u8 i = 0; i < 13; ++i)
+  {
+    const GPR reg = static_cast<GPR>(i);
+    if (HoldsGuestRegister(reg))
+    {
+      FlushHostRegister(emit, reg);
+    }
+    if (reg_state[i] != RESERVED)
+    {
+      reg_state[i] = i >= 3 && i < 3 + num_return_gprs ? ABI : FREE;
+    }
+  }
   emit->BCCTR();
-  for (u8 i = 3; i < 3 + num_return_gprs; ++i)
-  {
-    ASSERT(reg_state[i] == SCRATCH || reg_state[i] == ABI_FREE);
-    reg_state[i] = ABI;
-  }
-  for (u8 i = 3 + num_return_gprs; i < 13; ++i)
-  {
-    ASSERT(reg_state[i] == SCRATCH || reg_state[i] == ABI_FREE);
-    reg_state[i] = FREE;
-  }
 }
 
 void RegisterCache::PrepareReturn(PPCEmitter* emit, u8 num_return_gprs)
