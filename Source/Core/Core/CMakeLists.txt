@@ -283,6 +283,7 @@ elseif(_M_PPC64)
   target_sources(core PRIVATE
     PowerPC/JitTiered/TieredPPC64.cpp
     PowerPC/JitTiered/PPC64Baseline.cpp
+    PowerPC/JitTiered/PPC64RegCache.cpp
   )
 endif()
 
