@@ -200,6 +200,21 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       }
       STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
     }
+    else if (inst.OPCD == 31 && (inst.SUBOP10 == 266 || inst.SUBOP10 == 40 || inst.SUBOP10 == 235))
+    {
+      // reg-reg arithmetic ops (addx, subfx, mullwx for now)
+      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
+      LWZ(SCRATCH2, PPCSTATE, GPROffset(inst.RB));
+      // these are well-defined for all inputs, so let's just override the registers with ours
+      XFormInstruction(31, SCRATCH1, SCRATCH1, SCRATCH2, inst.SUBOP10);
+      if (inst.Rc)
+      {
+        EXTSW(SCRATCH1, SCRATCH1);
+        // FIXME: implement SO emulation?
+        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      }
+      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
