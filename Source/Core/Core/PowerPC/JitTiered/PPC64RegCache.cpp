@@ -128,10 +128,12 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
         {
           found_vacancy = true;
           spot = i;
-        } else if (!found_clean && (state & 96) != 0 && !(state & (FLAG_GUEST_UNSAVED | FLAG_IN_USE)) {
+        }
+        else if (!found_clean && (state & 96) != 0 && !(state & (FLAG_GUEST_UNSAVED | FLAG_IN_USE)))
+        {
           found_clean = true;
           spot = i;
-				}
+        }
       }
     }
     // ppcState pointer is not a guest register, so this should not recurse endlessly
