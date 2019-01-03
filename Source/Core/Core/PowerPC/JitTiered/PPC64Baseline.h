@@ -8,6 +8,7 @@
 
 #include "Common/PPCEmitter.h"
 #include "Core/PowerPC/Gekko.h"
+#include "Core/PowerPC/JitTiered/PPC64RegCache.h"
 #include "Core/PowerPC/PPCTables.h"
 #include "Core/PowerPC/PowerPC.h"
 
@@ -55,6 +56,7 @@ private:
 
   struct Exit
   {
+    PPC64RegCache::RegisterCache reg_cache;
     u32 address;
     s32 downcount;
     u32 flags;
@@ -68,16 +70,6 @@ private:
     s32 downcount;
   };
 
-  static constexpr s16 GPROffset(u32 i)
-  {
-    return s16(offsetof(PowerPC::PowerPCState, gpr) + 4 * i);
-  }
-
-  static constexpr s16 SPROffset(u32 i)
-  {
-    return s16(offsetof(PowerPC::PowerPCState, spr) + 4 * i);
-  }
-
   void RestoreRegisters(u32 saved_regs);
   void RestoreRegistersReturn(u32 saved_regs);
 
@@ -87,19 +79,13 @@ private:
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo);
 
-  static constexpr GPR PPCSTATE = R30;
-  static constexpr GPR TOC = R29;
-  static constexpr GPR SCRATCH1 = R7;
-  static constexpr GPR SCRATCH2 = R8;
-  static constexpr GPR SAVED1 = R31;
-  static constexpr GPR ARG1 = R3;
-  static constexpr GPR ARG2 = R4;
   static constexpr s16 OFF_PC = s16(offsetof(PowerPC::PowerPCState, pc));
   static constexpr s16 OFF_DOWNCOUNT = s16(offsetof(PowerPC::PowerPCState, downcount));
   static constexpr s16 OFF_EXCEPTIONS = s16(offsetof(PowerPC::PowerPCState, Exceptions));
 
   u32 address = 0;
   s32 downcount = 0;
+  PPC64RegCache::RegisterCache reg_cache;
 
   std::vector<std::pair<FixupBranch, Exit>> exits;
   std::vector<FallbackExit> fallback_exits;

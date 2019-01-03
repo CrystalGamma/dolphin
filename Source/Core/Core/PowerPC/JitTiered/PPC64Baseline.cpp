@@ -10,6 +10,14 @@
 #include "Common/Assert.h"
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
+// for short register state labels
+using namespace PPC64RegCache;
+
+static constexpr s16 SPROffset(u32 i)
+{
+  return s16(offsetof(PowerPC::PowerPCState, spr) + 4 * i);
+}
+
 void PPC64BaselineCompiler::RestoreRegistersReturn(u32 saved_regs)
 {
   ADDI(R1, R1, 32 + 8 * saved_regs);
@@ -58,15 +66,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
                                     const std::vector<UGeckoInstruction>& guest_instructions)
 {
   address = addr;
-  u32 saved_regs = 3;
-  // allocate stack frame, save caller registers
-  MFSPR(R0, SPR_LR);
-  STD(R0, R1, 16);
-  relocations.push_back(B(BR_LINK, offsets.save_gprs + (18 - saved_regs) * 4));
-  STD(R1, R1, -32 - 8 * saved_regs, UPDATE);
-  // copy our variables
-  MoveReg(PPCSTATE, R5);
-  ADDI(TOC, R6, 0x4000);
+  gpr_state = GPRState();
+  reg_cache.EstablishStackFrame(this);
 
   bool float_checked = false;
   bool omit_epilogue = false;
@@ -80,75 +81,80 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     downcount += opinfo->numCycles;
     if (opinfo->flags & FL_USE_FPU && !float_checked)
     {
-      LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, msr)));
+      const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+      const GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
+      LWZ(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, msr)));
       // test for FP bit
-      ANDI_Rc(SCRATCH1, SCRATCH1, 1 << 13);
+      ANDI_Rc(scratch, scratch, 1 << 13);
+      reg_cache.FreeGPR(scratch);
       exits.emplace_back(BC(BR_TRUE, CR0 + EQ),
-                         Exit{address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
+                         Exit{reg_cache, address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
       float_checked = true;
     }
 
     if (inst.OPCD == 14 || inst.OPCD == 15)
     {
+      const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
       // addi, addis
       if (inst.RA != 0)
       {
-        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
-        DFormInstruction(inst.OPCD, SCRATCH1, SCRATCH1, inst.SIMM_16);
+        const GPR reg = reg_cache.GetGPR(this, DIRTY_R + inst.RA);
+        DFormInstruction(inst.OPCD, scratch, reg, inst.SIMM_16);
       }
       else if (inst.OPCD == 14)
       {
-        LoadSignedImmediate(SCRATCH1, inst.SIMM_16);
+        LoadSignedImmediate(scratch, inst.SIMM_16);
       }
       else
       {
-        LoadSignedImmediate(SCRATCH1, s32(inst.SIMM_16) << 16);
+        LoadSignedImmediate(scratch, s32(inst.SIMM_16) << 16);
       }
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+      reg_cache.BindGPR(scratch, DIRTY_R + inst.RD);
     }
     else if (inst.OPCD >= 24 && inst.OPCD <= 29)
     {
       // ori(s), xori(s), andi(s).
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
-      DFormInstruction(inst.OPCD, SCRATCH1, SCRATCH1, inst.UIMM);
+      const GPR reg = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+      const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+      DFormInstruction(inst.OPCD, scratch, reg, inst.UIMM);
+      // could use ZEXT_R for andi(s)., but setting CR0 involves sign extension anyway
+      reg_cache.BindGPR(scratch, DIRTY_R + inst.RA);
       if (inst.OPCD == 28 || inst.OPCD == 29)
       {
-        EXTSW(SCRATCH1, SCRATCH1);
-        // FIXME: implement SO emulation?
-        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+        SetCR0(&gpr_state, scratch);
       }
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
     }
     else if (inst.OPCD == 7)
     {
       // mulli
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
-      MULLI(SCRATCH1, SCRATCH1, inst.SIMM_16);
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+      const GPR reg = reg_cache.GetGPR(this, DIRTY_R + inst.RA);
+      const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+      MULLI(scratch, reg, inst.SIMM_16);
+      reg_cache.BindGPR(scratch, DIRTY_R + inst.RD);
     }
     else if (inst.OPCD == 20 || inst.OPCD == 21)
     {
       // rlwimix, rlwinmx
+      GPR rs, ra;
       if (inst.OPCD == 20)
       {
-        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
-        LWZ(SCRATCH2, PPCSTATE, GPROffset(inst.RD));
+        // rlwimix: RA is in- and output register, and the operation is infallible
+        rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+        ra = reg_cache.GetGPR(this, (DIRTY_R + inst.RA) | FLAG_GUEST_UNSAVED);
       }
       else
       {
-        LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
+        // rlwinmx
+        rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+        ra = reg_cache.GetGPR(this, SCRATCH);
       }
       // replace the registers with our own, clear Rc and leave the rest as is
-      this->instructions.push_back((inst.hex & 0xfc00fffe) |
-                                   (u32(inst.OPCD == 20 ? SCRATCH2 : SCRATCH1) << 21) |
-                                   (u32(SCRATCH1) << 16));
+      this->instructions.push_back((inst.hex & 0xfc00fffe) | (u32(rs) << 21) | (u32(ra) << 16));
+      reg_cache.BindGPR(ra, DIRTY_R + inst.RA);
       if (inst.Rc)
       {
-        EXTSW(SCRATCH1, SCRATCH1);
-        // FIXME: implement SO emulation?
-        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+        reg_cache.SetCR0(this, ra);
       }
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
     }
     else if (inst.hex == 0x4182fff8 && index >= 2 &&
              (guest_instructions[index - 2].hex >> 16) == 0x800d &&
@@ -156,15 +162,17 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     {
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip (wait-on-word) @ %08x", address);
-      LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
-      CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
-      exits.emplace_back(BC(BR_TRUE, CR0 + EQ), Exit{address - 8, downcount, SKIP, 0});
+      GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+      LD(scratch, reg_cache.GetGPR(this, PPCSTATE_PTR),
+         s16(offsetof(PowerPC::PowerPCState, cr_val)));
+      CMPLI(CR0, CMP_WORD, scratch, 0);
+      exits.emplace_back(BC(BR_TRUE, CR0 + EQ), Exit{reg_cache, address - 8, downcount, SKIP, 0});
     }
     else if (inst.hex == 0x48000000)
     {
       // idle skip as detected in Interpreter
       ERROR_LOG(DYNA_REC, "compiling idle skip (empty loop) @ %08x", address);
-      WriteExit({address, downcount, SKIP, 0});
+      WriteExit({reg_cache, address, downcount, SKIP, 0});
       omit_epilogue = true;
       break;
     }
@@ -173,7 +181,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // unconditional branch
       u32 base = inst.AA ? 0 : address;
       u32 target = base + u32(Common::BitCast<s32>(inst.LI << 8) >> 6);
-      WriteExit({target, downcount, inst.LK ? LINK : JUMP, address + 4});
+      WriteExit({reg_cache, target, downcount, inst.LK ? LINK : JUMP, address + 4});
       omit_epilogue = true;
       break;
     }
@@ -188,62 +196,70 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     else if (inst.OPCD == 31 && (inst.SUBOP10 == 28 || inst.SUBOP10 == 444))
     {
       // reg-reg bitops (andx, orx for now)
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RB));
-      LWZ(SCRATCH2, PPCSTATE, GPROffset(inst.RD));
+      GPR rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+      GPR rb = reg_cache.GetGPR(this, DIRTY_R + inst.RB);
+      GPR ra = reg_cache.GetGPR(this, SCRATCH);
       // these are well-defined for all inputs, so let's just override the registers with ours
-      XFormInstruction(31, SCRATCH1, SCRATCH1, SCRATCH2, inst.SUBOP10);
+      XFormInstruction(31, rs, ra, rb, inst.SUBOP10);
+      reg_cache.BindGPR(ra, DIRTY_R + inst.RA);
       if (inst.Rc)
       {
-        EXTSW(SCRATCH1, SCRATCH1);
-        // FIXME: implement SO emulation?
-        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+        reg_cache.SetCR0(this, ra);
       }
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
     }
     else if (inst.OPCD == 31 && (inst.SUBOP10 == 266 || inst.SUBOP10 == 40 || inst.SUBOP10 == 235))
     {
       // reg-reg arithmetic ops (addx, subfx, mullwx for now)
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RA));
-      LWZ(SCRATCH2, PPCSTATE, GPROffset(inst.RB));
+      GPR ra = reg_cache.GetGPR(this, DIRTY_R + inst.RA);
+      GPR rb = reg_cache.GetGPR(this, DIRTY_R + inst.RB);
+      GPR rt = reg_cache.GetGPR(this, SCRATCH);
       // these are well-defined for all inputs, so let's just override the registers with ours
-      XFormInstruction(31, SCRATCH1, SCRATCH1, SCRATCH2, inst.SUBOP10);
+      XFormInstruction(31, rt, ra, rb, inst.SUBOP10);
+      reg_cache.BindGPR(rt, DIRTY_R + inst.RD);
       if (inst.Rc)
       {
-        EXTSW(SCRATCH1, SCRATCH1);
-        // FIXME: implement SO emulation?
-        STD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val)));
+        reg_cache.SetCR0(this, rt);
       }
-      STW(SCRATCH1, PPCSTATE, GPROffset(inst.RD));
     }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
     }
+    reg_cache.ReleaseRegisters();
+    reg_cache.FlushAllRegisters();
+    reg_cache.InvalidateAllRegisters();
     address += 4;
   }
   if (!omit_epilogue)
   {
-    LoadUnsignedImmediate(SCRATCH1, address);
-    STW(SCRATCH1, PPCSTATE, OFF_PC);
-    STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
-    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(downcount));
-    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
+    GPR scratch = reg_cache.GetGPR(this, SCRATCH) LoadUnsignedImmediate(scratch, address);
+    STW(scratch, ppcs, OFF_PC);
+    STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
+    LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+    ADDI(scratch, ppcs, -s16(downcount));
+    STW(scratch, ppcs, OFF_DOWNCOUNT);
     const bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
-    LoadUnsignedImmediate(ARG1, block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
-    RestoreRegistersReturn(saved_regs);
+    reg_cache.PrepareReturn(this, 1);
+    LoadUnsignedImmediate(reg_cache.GetReturnRegister(0),
+                          block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
+    RestoreRegistersReturn(reg_cache.saved_regs);
   }
 
   for (auto fexit : fallback_exits)
   {
     SetBranchTarget(fexit.store_pc);
-    STW(SCRATCH1, PPCSTATE, OFF_PC);
+    GPR ppcs = fexit.reg_cache.GetGPR(this, PPCSTATE_PTR);
+    STW(fexit.pc, ppcs, OFF_PC);
     SetBranchTarget(fexit.leave_pc);
-    LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    ADDI(SCRATCH2, SCRATCH2, -s16(fexit.downcount));
-    STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-    LoadUnsignedImmediate(ARG1, 0);
-    RestoreRegistersReturn(saved_regs);
+    fexit.reg_cache.ReleaseRegisters();
+
+    GPR scratch = fexit.reg_cache.GetGPR(this, SCRATCH);
+    LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+    ADDI(scratch, scratch, -s16(fexit.downcount));
+    STW(scratch, ppcs, OFF_DOWNCOUNT);
+    fexit.reg_cache.PrepareReturn(this, 1);
+    LoadUnsignedImmediate(fexit.reg_cache.GetReturnRegister(0), 0);
+    RestoreRegistersReturn(reg_cache.saved_regs);
   }
 
   for (auto& pair : exits)
@@ -255,45 +271,52 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 
 void PPC64BaselineCompiler::WriteExit(const Exit& jump)
 {
-  const u32 saved_regs = 3;
+  RegisterCache& rc = jump.reg_cache;
+  GPR ppcs = rc.GetGPR(this, PPCSTATE_PTR);
+  GPR scratch = rc.GetGPR(this, SCRATCH);
   if (jump.flags & RAISE_FPU_EXC)
   {
-    LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-    ORI(SCRATCH1, SCRATCH1, u16(EXCEPTION_FPU_UNAVAILABLE));
-    STW(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
+    LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+    ORI(scratch, ppcs, u16(EXCEPTION_FPU_UNAVAILABLE));
+    STW(scratch, ppcs, OFF_EXCEPTIONS);
   }
   if (jump.flags & SKIP)
   {
+    GPR target = rc.PrepareCall(this, 0);
+    // ppcs is invalidated by PrepareCall
+    ppcs = rc.GetGPR(this, PPCSTATE_PTR);
     // call CoreTiming::Idle
-    LD(R12, TOC, s16(s32(offsetof(TableOfContents, idle)) - 0x4000));
-    MTSPR(SPR_CTR, R12);
-    BCCTR();
+    LD(target, rc.GetGPR(this, TOC_PTR), s16(s32(offsetof(TableOfContents, idle)) - 0x4000));
+    rc.BindCall(this);
+    rc.PerformCall(this, 0);
   }
+  scratch = rc.GetGPR(this, SCRATCH);
   if (jump.flags & JUMPSPR)
   {
-    LWZ(SCRATCH1, PPCSTATE, SPROffset(jump.address));
+    LWZ(scratch, ppcs, SPROffset(jump.address));
   }
   else
   {
-    LoadUnsignedImmediate(SCRATCH1, jump.address);
+    LoadUnsignedImmediate(scratch, jump.address);
   }
-  STW(SCRATCH1, PPCSTATE, OFF_PC);
+  STW(scratch, ppcs, OFF_PC);
   if (jump.flags & EXCEPTION)
   {
-    ADDI(SCRATCH1, SCRATCH1, 4);
+    ADDI(scratch, scratch, 4);
   }
-  STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+  STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
   if (jump.flags & LINK)
   {
-    LoadUnsignedImmediate(SCRATCH2, jump.link_address);
-    STW(SCRATCH2, PPCSTATE, SPROffset(SPR_LR));
+    LoadUnsignedImmediate(scratch, jump.link_address);
+    STW(scratch, ppcs, SPROffset(SPR_LR));
   }
   // decrement *after* skip – important for timing equivalency to Generic
-  LWZ(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  ADDI(SCRATCH2, SCRATCH2, -s16(jump.downcount));
-  STW(SCRATCH2, PPCSTATE, OFF_DOWNCOUNT);
-  LoadUnsignedImmediate(ARG1, 0);
-  RestoreRegistersReturn(saved_regs);
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(jump.downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
+  rc.PrepareReturn(this, 1);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), 0);
+  RestoreRegistersReturn(jump.reg_cache.saved_regs);
 }
 
 void PPC64BaselineCompiler::RelocateAll(u32 offset)
@@ -308,11 +331,16 @@ void PPC64BaselineCompiler::RelocateAll(u32 offset)
 
 void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
+  // fallbacks may do anything with the guest registers, so empty the cache
+  reg_cache.FlushAllRegisters();
+  reg_cache.InvalidateAllRegisters();
+  GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
+  GPR scratch = reg_cache.GetGPR(this, SCRATCH);
   // set PC + NPC
-  LoadUnsignedImmediate(SCRATCH1, address);
-  STW(SCRATCH1, PPCSTATE, OFF_PC);
-  ADDI(SCRATCH1, SCRATCH1, 4);
-  STW(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+  LoadUnsignedImmediate(scratch, address);
+  STW(scratch, ppcs, OFF_PC);
+  ADDI(scratch, scratch, 4);
+  STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
   u32 fallback_index;
   switch (inst.OPCD)
   {
@@ -334,23 +362,31 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   default:
     fallback_index = inst.OPCD;
   }
-  // load interpreter routine
-  LD(R12, TOC, s16(s32(offsetof(TableOfContents, fallback_table) + 8 * fallback_index) - 0x4000));
-  MTSPR(SPR_CTR, R12);
-  // load instruction value into first argument register
-  LoadUnsignedImmediate(ARG1, inst.hex);
-  // do the call
-  BCCTR();
+
+  GPR target = reg_cache.PrepareCall(this, 1);
+  // ppcs was invalidated
+  ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
+  GPR toc = reg_cache.GetGPR(this, TOC_PTR);
+  LD(target, toc,
+     s16(s32(offsetof(TableOfContents, fallback_table) + 8 * fallback_index) - 0x4000));
+  reg_cache.BindCall(this);
+  LoadUnsignedImmediate(reg_cache.GetArgumentRegister(0), inst.hex);
+  reg_cache.PerformCall(this, 0);
+
+  // scratch was invalidated
+  scratch = reg_cache.GetGPR(this, SCRATCH);
   // check for exceptions
-  LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
+  LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+  ANDI_Rc(scratch, scratch, u16(JitTieredGeneric::EXCEPTION_SYNC));
+  // allocate scratch register before branch, so we can use the same exit block
+  GPR scratch2 = reg_cache.GetGPR(this, SCRATCH);
   auto exc_exit = BC(BR_FALSE, CR0 + EQ);
   // load NPC into SCRATCH1 and return if it's ≠ PC + 4
-  LWZ(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, npc)));
+  LWZ(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
   XORIS(SCRATCH2, SCRATCH1, u16((address + 4) >> 16));
   CMPLI(CR0, CMP_WORD, SCRATCH2, u16((address + 4) & 0xffff));
   auto jump_exit = BC(BR_FALSE, CR0 + EQ);
-  fallback_exits.push_back({jump_exit, exc_exit, downcount});
+  fallback_exits.push_back({reg_cache, scratch, jump_exit, exc_exit, downcount});
 }
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
@@ -361,44 +397,48 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
   }
   bool inverted = false;
   u32 bit = 0;
+  const GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
   if (!(inst.BO & BO_DONT_CHECK_CONDITION))
   {
     const bool branch_on_true = inst.BO & BO_BRANCH_IF_TRUE;
-    LD(SCRATCH1, PPCSTATE, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
+    const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+    LD(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * (inst.BI / 4)));
     switch (inst.BI % 4)
     {
     case LT:
       INFO_LOG(DYNA_REC, "LT branch @ %08x", address);
-      RLDICL(SCRATCH1, SCRATCH1, 2, 63, RC);
+      RLDICL(scratch, scratch, 2, 63, RC);
       inverted = branch_on_true;
       bit = CR0 + EQ;
       break;
     case GT:
       INFO_LOG(DYNA_REC, "GT branch @ %08x", address);
-      CMPI(CR0, CMP_DWORD, SCRATCH1, 0);
+      CMPI(CR0, CMP_DWORD, scratch, 0);
       inverted = !branch_on_true;
       bit = CR0 + GT;
       break;
     case EQ:
       INFO_LOG(DYNA_REC, "EQ branch @ %08x", address);
-      CMPLI(CR0, CMP_WORD, SCRATCH1, 0);
+      CMPLI(CR0, CMP_WORD, scratch, 0);
       inverted = !branch_on_true;
       bit = CR0 + EQ;
       break;
     case SO:
       INFO_LOG(DYNA_REC, "SO branch @ %08x", address);
       TW();
-      RLDICL(SCRATCH1, SCRATCH1, 3, 63, RC);
+      RLDICL(scratch, scratch, 3, 63, RC);
       inverted = !branch_on_true;
       bit = CR0 + EQ;
     }
+    reg_cache.FreeGPR(scratch);
   }
   if (!(inst.BO & BO_DONT_DECREMENT_FLAG))
   {
-    LWZ(SCRATCH1, PPCSTATE, SPROffset(SPR_CTR));
-    ADDI(SCRATCH1, SCRATCH1, -1);
-    STW(SCRATCH1, PPCSTATE, SPROffset(SPR_CTR));
-    CMPLI(CR1, CMP_WORD, SCRATCH1, 0);
+    const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+    LWZ(scratch, ppcs, SPROffset(SPR_CTR));
+    ADDI(scratch, scratch, -1);
+    STW(scratch, ppcs, SPROffset(SPR_CTR));
+    CMPLI(CR1, CMP_WORD, scratch, 0);
     bool branch_on_zero = inst.BO & BO_BRANCH_IF_CTR_0;
     if (inst.BO & BO_DONT_CHECK_CONDITION)
     {
@@ -423,6 +463,7 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
       CRNOR(bit, bit, CR1 + EQ);
       inverted = false;
     }
+    reg_cache.FreeGPR(scratch);
   }
   FixupBranch branch;
   if ((~inst.BO & (BO_DONT_CHECK_CONDITION | BO_DONT_DECREMENT_FLAG)) == 0)
@@ -443,13 +484,14 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
     // man, this sign-extension looks ugly
     u32 target = jump_base + Common::BitCast<u32>(s32(Common::BitCast<s16>(u16(inst.BD << 2))));
     INFO_LOG(DYNA_REC, "target: %08x", target);
-    exits.emplace_back(branch, Exit{target, downcount, inst.LK ? LINK : JUMP, address + 4});
+    exits.emplace_back(branch,
+                       Exit{reg_cache, target, downcount, inst.LK ? LINK : JUMP, address + 4});
   }
   else
   {
     u32 reg = inst.SUBOP10 == 16 ? SPR_LR : SPR_CTR;
-    exits.emplace_back(branch,
-                       Exit{reg, downcount, JUMPSPR | (inst.LK ? LINK : JUMP), address + 4});
+    exits.emplace_back(
+        branch, Exit{reg_cache, reg, downcount, JUMPSPR | (inst.LK ? LINK : JUMP), address + 4});
   }
 }
 
@@ -500,67 +542,75 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
   }
   ASSERT(offset != 0);
+  const GPR target = reg_cache.PrepareCall(this, is_store ? 2 : 1);
+  const GPR toc = reg_cache.GetGPR(this, TOC_PTR);
+  // TODO: allocate this register more smartly to eliminate moves
+  const GPR addr_reg = reg_cache.GetGPR(this, is_update ? SAVED : SCRATCH);
   if (inst.RA != 0)
   {
     // calculate address
-    LWZ(SAVED1, PPCSTATE, GPROffset(inst.RA));
+    GPR base = reg_cache.GetGPR(this, inst.RA);
     if (is_indexed)
     {
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RB));
-      ADD(SAVED1, SAVED1, SCRATCH1);
+      GPR index = reg_cache.GetGPR(this, DIRTY_R + inst.RB);
+      ADD(addr_reg, base, index);
     }
     else
     {
-      ADDI(SAVED1, SAVED1, inst.SIMM_16);
+      ADDI(addr_reg, base, inst.SIMM_16);
     }
-    RLDICL(SAVED1, SAVED1, 0, 32);
+    RLDICL(addr_reg, addr_reg, 0, 32);
   }
   else
   {
     ASSERT(!is_update);
     if (is_indexed)
     {
-      LWZ(SCRATCH1, PPCSTATE, GPROffset(inst.RB));
+      MoveReg(addr_reg, reg_cache.GetGPR(this, ZEXT_R + inst.RB));
     }
     else
     {
-      LoadUnsignedImmediate(SAVED1, Common::BitCast<u32>(s32(inst.SIMM_16)));
+      LoadUnsignedImmediate(addr_reg, Common::BitCast<u32>(s32(inst.SIMM_16)));
     }
   }
   // call the MMU function
-  LD(R12, TOC, offset);
+  LD(target, toc, offset);
+  reg_cache.BindCall(this);
+  GPR arg1 = reg_cache.GetArgumentRegister(0);
   if (!is_store)
   {
-    MoveReg(ARG1, SAVED1);
+    MoveReg(arg1, addr_reg);
   }
   else
   {
-    LWZ(ARG1, PPCSTATE, GPROffset(inst.RD));
+    MoveReg(arg1, reg_cache.GetGPR(this, inst.RD));
     // make sure it's properly zero-extended
     if ((op >> 1) == 3)
     {
-      RLDICL(ARG1, ARG1, 0, 56);
+      RLDICL(arg1, arg1, 0, 56);
     }
     else if ((op >> 1) == 6)
     {
-      RLDICL(ARG1, ARG1, 0, 48);
+      RLDICL(arg1, arg1, 0, 48);
     }
-    MoveReg(ARG2, SAVED1);
+    MoveReg(reg_cache.GetArgumentRegister(1), addr_reg);
   }
-  MTSPR(SPR_CTR, R12);
-  BCCTR();
+  reg_cache.PerformCall(this, is_store ? 0 : 1);
+
+  const GPR scratch = reg_cache.GetGPR(this, SCRATCH);
+  const GPR ppcs = reg_cache.GetGPR(this, PPCSTATE_PTR);
   // check for exceptions
-  LWZ(SCRATCH1, PPCSTATE, OFF_EXCEPTIONS);
-  ANDI_Rc(SCRATCH1, SCRATCH1, u16(JitTieredGeneric::EXCEPTION_SYNC));
-  exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{address, downcount, EXCEPTION, 0});
+  LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+  ANDI_Rc(scratch, scratch, u16(JitTieredGeneric::EXCEPTION_SYNC));
+  exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount, EXCEPTION, 0});
   // maintain GPR file
   if (is_update)
   {
     ASSERT(is_store || inst.RA != inst.RD);
-    STW(SAVED1, PPCSTATE, GPROffset(inst.RA));
+    reg_cache.BindGPR(addr_reg, ZEXT_R + inst.RA);
   }
   if (!is_store)
   {
-    STW(ARG1, PPCSTATE, GPROffset(inst.RD));
+    reg_cache.BindGPR(reg_cache.GetReturnRegister(0), ((op >> 1) == 5 ? SEXT_R : ZEXT_R) + inst.RD);
   }
 }
