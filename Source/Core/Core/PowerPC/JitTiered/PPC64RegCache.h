@@ -107,6 +107,9 @@ struct RegisterCache
   void FlushAllRegisters(PPCEmitter* emit);
 
   GPR GetGPR(PPCEmitter* emit, u16 specifier);
+  GPR GetScratch(PPCEmitter* emit, u16 specifier = SCRATCH);
+  GPR GetPPCState();
+  GPR GetToC();
 
   /// invalidates all non-LOCKED register references
   GPR PrepareCall(PPCEmitter* emit, u8 num_parameters);
