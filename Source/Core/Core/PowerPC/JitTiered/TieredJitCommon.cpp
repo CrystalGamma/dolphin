@@ -54,6 +54,7 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
       CompactInterpreterBlocks(&baseline_report, false);
       baseline_report.invalidation_bloom = next_report.invalidation_bloom;
       baseline_report.invalidations.swap(next_report.invalidations);
+      baseline_report.bails.swap(next_report.bails);
       old_bloom = next_report.invalidation_bloom;
       current_toc = next_toc;
       next_report.invalidation_bloom = BloomNone();
@@ -113,12 +114,20 @@ void JitTieredCommon::Run()
           cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
       if (flags & BLOCK_OVERRUN)
       {
+        if (flags & REPORT_BAIL)
+        {
+          next_report.bails.push_back({PC, flags});
+        }
         HandleOverrun(cache_entry);
       }
-      if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
-          flags & REPORT_IMMEDIATELY)
+      if (flags & REPORT_BAIL)
       {
-        CPUDoReport(flags & REPORT_IMMEDIATELY, true);
+        next_report.bails.push_back({PC, flags});
+      }
+      if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
+          flags & (REPORT_IMMEDIATELY | REPORT_BAIL))
+      {
+        CPUDoReport(flags & REPORT_IMMEDIATELY, flags & REPORT_BAIL);
         if (!cpu_thread_lock.owns_lock())
         {
           cpu_thread_lock = std::unique_lock(disp_cache_mutex);
@@ -178,6 +187,17 @@ void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
     cache_entry->executor = interpreter_executor;
     // bloom is already correct
     // leave usecount untouched
+
+    // JIT bails may leave us in the middle of a block
+    if (PC < start_addr + len * 4)
+    {
+      ASSERT(PC >= start_addr);
+      if (!InterpretBlock(&next_report.instructions[offset + (PC - start_addr) / 4]))
+      {
+        return;
+      }
+    }
+    ASSERT(PC == start_addr + len * 4);
   }
   JitTieredGeneric::HandleOverrun(cache_entry);
 }
@@ -216,19 +236,25 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCache
 }
 
 void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
+                                    std::vector<Bail>* bails,
                                     std::map<u32, ReportedBlock>* reported_blocks)
 {
   std::sort(invalidations->begin(), invalidations->end(),
             [](const Invalidation& a, const Invalidation& b) {
               return std::tie(a.first, a.last) < std::tie(b.first, b.last);
             });
+  std::sort(bails->begin(), bails->end(), [](const Bail& a, const Bail& b) {
+    return std::tie(a.guest_address, a.status) < std::tie(b.guest_address, b.status);
+  });
   std::unique_lock guard(block_db_mutex);
   size_t num_inv = invalidations->size();
   size_t inv_start = 0;
+  size_t num_bails = bails->size();
+  size_t bail_start = 0;
   auto iter = jit_block_db.begin();
-  // this loop should run in O(num_inv + #blocks * log(#reported_blocks) * (size of biggest
-  // intersecting cluster of invalidations)^2) time if this turns out to be too slow, we may need to
-  // find a container more suitable to finding intersecting ranges
+  // this loop should run in O(num_inv + num_bails + #blocks * log(#reported_blocks) * (size of
+  // biggest intersecting cluster of invalidations)^2) time if this turns out to be too slow, we may
+  // need to find a container more suitable to finding intersecting ranges
   while (iter != jit_block_db.end())
   {
     const u32 addr = iter->first;
@@ -246,6 +272,11 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
       // this and all previous blocks only affect lower addresses
       inv_start += 1;
     }
+    while (bail_start < num_bails && bails->at(bail_start).guest_address < addr)
+    {
+      // this and all previous blocks only affect lower addresses
+      bail_start += 1;
+    }
     auto reported_block = reported_blocks->find(addr);
     u32 reported_len = 0;
     if (reported_block != reported_blocks->end())
@@ -262,6 +293,17 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
     bool invalidated = false;
     if (jit_len != 0)
     {
+      for (size_t i = bail_start; i < num_bails; ++i)
+      {
+        const Bail& bail = bails->at(i);
+        if (bail.guest_address >= addr + jit_len * 4)
+        {
+          // this and all following are at higher addresses
+          break;
+        }
+        invalidated = true;
+        block.bails.push_back(bail);
+      }
       if (reported_len > jit_len)
       {
         // Baseline block overrun
@@ -287,7 +329,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
     }
     else if (bloom_hit)
     {
-      // figure out how to check optimized blocks for invalidation when implementing
+      // figure out how to check optimized blocks for invalidation and bails when implementing
       // optimized JIT
       invalidated = true;
       break;
@@ -298,6 +340,10 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
       {
         INFO_LOG(DYNA_REC, "recompile Baseline block @ %08x", addr);
         reported_block->second.usecount += block.runcount;
+        std::sort(block.bails.begin(), block.bails.end(), [](const Bail& a, const Bail& b) {
+          return std::tie(a.guest_address, a.status) < std::tie(b.guest_address, b.status);
+        });
+        reported_block->second.bails.swap(block.bails);
       }
       else
       {
@@ -314,6 +360,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
     ++iter;
   }
   invalidations->clear();
+  bails->clear();
 }
 
 bool JitTieredCommon::BaselineIteration()
@@ -342,7 +389,7 @@ bool JitTieredCommon::BaselineIteration()
   baseline_report.blocks.clear();
 
   UpdateBlockDB(baseline_report.invalidation_bloom, &baseline_report.invalidations,
-                &reported_blocks);
+                &baseline_report.bails, &reported_blocks);
   baseline_report.invalidation_bloom = BloomNone();
 
   for (auto pair : reported_blocks)
@@ -380,8 +427,12 @@ bool JitTieredCommon::BaselineIteration()
     {
       insts.push_back(baseline_report.instructions[block.start + i]);
     }
-    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1), nullptr, runcount,
-                   current_offset, std::move(insts)};
+    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1),
+                   nullptr,
+                   runcount,
+                   current_offset,
+                   std::move(insts),
+                   std::move(block.bails)};
     BaselineCompile(address, std::move(jb));
   }
 

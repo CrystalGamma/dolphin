@@ -25,6 +25,12 @@ public:
   {
     BLOCK_OVERRUN = 1,
     REPORT_IMMEDIATELY = 2,
+    REPORT_BAIL = 4,
+  };
+  struct Bail
+  {
+    u32 guest_address;
+    u32 status;
   };
 
   virtual const char* GetName() const { return "TieredGeneric"; }
@@ -108,6 +114,7 @@ protected:
     std::vector<DispatchCacheEntry> blocks;
     std::vector<DecodedInstruction> instructions;
     std::vector<Invalidation> invalidations;
+    std::vector<Bail> bails;
     Bloom invalidation_bloom = BloomNone();
   };
 
@@ -204,12 +211,15 @@ protected:
     u64 runcount;
     u32 offset;
     std::vector<DecodedInstruction> instructions;
+    /// this should be sorted.
+    std::vector<Bail> bails;
   };
   struct ReportedBlock
   {
     u32 start;
     u32 len;
-    u32 usecount;
+    u64 usecount;
+    std::vector<Bail> bails;
   };
 
   void CPUDoReport(bool wait, bool hint);
@@ -220,7 +230,7 @@ protected:
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
-                     std::map<u32, ReportedBlock>* reported_blocks);
+                     std::vector<Bail>* bails, std::map<u32, ReportedBlock>* reported_blocks);
   virtual void BaselineCompile(u32 address, JitBlock&& block) = 0;
 
   static constexpr u32 BASELINE_THRESHOLD = 16;

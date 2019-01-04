@@ -63,7 +63,8 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
 }
 
 void PPC64BaselineCompiler::Compile(u32 addr,
-                                    const std::vector<UGeckoInstruction>& guest_instructions)
+                                    const std::vector<UGeckoInstruction>& guest_instructions,
+                                    const std::vector<JitTieredGeneric::Bail>& bails)
 {
   address = addr;
   reg_cache = RegisterCache();
@@ -74,11 +75,21 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   }
   reg_cache.EstablishStackFrame(this, save_regs);
 
+  std::vector<u32> this_inst_bails;
+  size_t bails_pos;
+
   bool float_checked = false;
   bool omit_epilogue = false;
   INFO_LOG(DYNA_REC, "Compiling code at %08x", address);
   for (u32 index = 0; index < guest_instructions.size(); ++index)
   {
+    ASSERT(bails_pos >= bails.size() || bails.at(bails_pos).guest_address >= address);
+    this_inst_bails.clear();
+    while (bails_pos < bails.size() && bails.at(bails_pos).guest_address == address)
+    {
+      this_inst_bails.push_back(bails.at(bails_pos).status);
+      ++bails_pos;
+    }
     auto inst = guest_instructions[index];
     GekkoOPInfo* opinfo = PPCTables::GetOpInfo(inst);
     INFO_LOG(DYNA_REC, "%08x: %08x %s", address, inst.hex, opinfo->opname);
@@ -195,7 +206,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     }
     else if ((inst.OPCD >= 32 && inst.OPCD <= 45) || (inst.OPCD == 31 && inst.SUBOP5 == 23))
     {
-      LoadStore(inst, *opinfo);
+      LoadStore(inst, *opinfo, this_inst_bails);
     }
     else if (inst.OPCD == 31 && (inst.SUBOP10 == 28 || inst.SUBOP10 == 444))
     {
@@ -355,7 +366,10 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   ADDI(scratch, scratch, -s16(jump.downcount));
   STW(scratch, ppcs, OFF_DOWNCOUNT);
   rc.PrepareReturn(this, 1);
-  LoadUnsignedImmediate(rc.GetReturnRegister(0), 0);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0),
+                        jump.flags & FASTMEM_BAIL ?
+                            (JitTieredGeneric::BLOCK_OVERRUN | JitTieredGeneric::REPORT_BAIL) :
+                            0);
   RestoreRegistersReturn(jump.reg_cache.saved_regs);
 }
 
@@ -544,7 +558,8 @@ void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
   }
 }
 
-void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo)
+void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo,
+                                      const std::vector<u32>& bails)
 {
   u32 op;
   const bool is_indexed = inst.OPCD == 31;
@@ -589,6 +604,10 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     break;
   default:
     ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
+  }
+  if (bails.empty())
+  {
+    exits.emplace_back(B(), Exit{reg_cache, address, downcount, EXCEPTION | FASTMEM_BAIL, 0});
   }
   ASSERT(offset != 0);
   const GPR target = reg_cache.PrepareCall(this, is_store ? 2 : 1);

@@ -142,7 +142,7 @@ void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
   {
     instructions.push_back(UGeckoInstruction(inst.inst));
   }
-  compiler.Compile(address, instructions);
+  compiler.Compile(address, instructions, block.bails);
   const u32 len = compiler.instructions.size() * 4;
   if (len > MAX_BLOCK_SIZE)
   {

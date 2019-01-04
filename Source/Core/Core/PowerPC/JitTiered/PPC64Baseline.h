@@ -8,6 +8,7 @@
 
 #include "Common/PPCEmitter.h"
 #include "Core/PowerPC/Gekko.h"
+#include "Core/PowerPC/JitTiered/JitTiered.h"
 #include "Core/PowerPC/JitTiered/PPC64RegCache.h"
 #include "Core/PowerPC/PPCTables.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -36,7 +37,8 @@ public:
   };
   PPC64BaselineCompiler() {}
   PPC64BaselineCompiler(CommonRoutineOffsets offs) : offsets{offs} {}
-  void Compile(u32 addr, const std::vector<UGeckoInstruction>& instructions);
+  void Compile(u32 addr, const std::vector<UGeckoInstruction>& instructions,
+               const std::vector<JitTieredGeneric::Bail>& bails);
   void EmitCommonRoutines();
   void RelocateAll(u32 offset);
 
@@ -51,7 +53,8 @@ private:
     SKIP = 2,
     JUMPSPR = 4,
     EXCEPTION = 8,
-    RAISE_FPU_EXC = 16
+    RAISE_FPU_EXC = 16,
+    FASTMEM_BAIL = 32
   };
 
   struct Exit
@@ -79,7 +82,7 @@ private:
 
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
-  void LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo);
+  void LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo, const std::vector<u32>& bails);
 
   static constexpr s16 OFF_PC = s16(offsetof(PowerPC::PowerPCState, pc));
   static constexpr s16 OFF_DOWNCOUNT = s16(offsetof(PowerPC::PowerPCState, downcount));
