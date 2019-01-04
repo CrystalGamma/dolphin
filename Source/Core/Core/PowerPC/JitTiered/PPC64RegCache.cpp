@@ -186,24 +186,24 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
 GPR RegisterCache::GetScratch(PPCEmitter* emit, u16 specifier)
 {
   ASSERT(specifier == SCRATCH || specifier == LOCKED);
-  const u8 start_search = specifier == SCRATCH ? 0 : 14;
-  const u8 end_search = specifier == SCRATCH ? 13 : 32;
+  const s8 first_search = 31;
+  const s8 last_search = specifier == SCRATCH ? 0 : 14;
   bool found_vacancy = false;
   bool found_clean = false;
   u8 spot = 0;
-  for (u8 i = start_search; i < end_search; ++i)
+  for (s8 i = first_search; i >= last_search; --i)
   {
     const u16 state = reg_state[i];
     if (state == FREE || state == ABI_FREE)
     {
       found_vacancy = true;
-      spot = i;
+      spot = u8(i);
       break;
     }
     else if (!found_clean && (state & 96) != 0 && !(state & (FLAG_GUEST_UNSAVED | FLAG_IN_USE)))
     {
       found_clean = true;
-      spot = i;
+      spot = u8(i);
     }
   }
   // ppcState pointer is not a guest register, so this should not recurse endlessly
@@ -215,13 +215,13 @@ GPR RegisterCache::GetScratch(PPCEmitter* emit, u16 specifier)
     return static_cast<GPR>(spot);
   }
   // evict guest register
-  for (u8 i = start_search; i < end_search; ++i)
+  for (u8 i = first_search; i >= last_search; --i)
   {
     const GPR host_reg = static_cast<GPR>(i);
     if (HoldsGuestRegister(host_reg) && !(reg_state[host_reg] & FLAG_IN_USE))
     {
       emit->STW(host_reg, ppcs, GPROffset(GetGuestRegister(host_reg)));
-      INFO_LOG(DYNA_REC, "creating scratch in %u (spill)", u32(host_reg));
+      WARN_LOG(DYNA_REC, "creating scratch in %u (spill)", u32(host_reg));
       reg_state[host_reg] = specifier;
       return host_reg;
     }
@@ -286,6 +286,46 @@ void RegisterCache::FlushAllRegisters(PPCEmitter* emit)
 GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
 {
   ASSERT(num_parameters <= 10);
+  for (u8 i = 14; i < 32; ++i)
+  {
+    if (reg_state[i] == FREE ||
+        (HoldsGuestRegister(static_cast<GPR>(i)) && !(reg_state[i] & FLAG_GUEST_UNSAVED)))
+    {
+      for (u8 j = 0; j < 13; ++j)
+      {
+        if (reg_state[j] & FLAG_GUEST_UNSAVED)
+        {
+          INFO_LOG(DYNA_REC, "saving guest register %u (was in %u as %x) to %u (which was %x)",
+                   u32(GetGuestRegister(static_cast<GPR>(j))), u32(j), u32(reg_state[j]), u32(i),
+                   u32(reg_state[i]));
+          emit->MoveReg(static_cast<GPR>(i), static_cast<GPR>(j));
+          reg_state[i] = reg_state[j];
+          reg_state[j] = FREE;
+          break;
+        }
+      }
+    }
+  }
+  for (u8 i = 14; i < 32; ++i)
+  {
+    if (reg_state[i] == FREE)
+    {
+      for (u8 j = 0; j < 13; ++j)
+      {
+        if (HoldsGuestRegister(static_cast<GPR>(j)))
+        {
+          INFO_LOG(DYNA_REC, "saving guest register %u (was in %u as %x) to %u (which was %x)",
+                   u32(GetGuestRegister(static_cast<GPR>(j))), u32(j), u32(reg_state[j]), u32(i),
+                   u32(reg_state[i]));
+          emit->MoveReg(static_cast<GPR>(i), static_cast<GPR>(j));
+          reg_state[i] = reg_state[j];
+          reg_state[j] = FREE;
+          break;
+        }
+      }
+    }
+  }
+
   for (u8 i = 3; i < 3 + num_parameters; ++i)
   {
     const GPR reg = static_cast<GPR>(i);
