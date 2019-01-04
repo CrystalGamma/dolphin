@@ -76,7 +76,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
   reg_cache.EstablishStackFrame(this, save_regs);
 
   std::vector<u32> this_inst_bails;
-  size_t bails_pos;
+  size_t bails_pos = 0;
 
   bool float_checked = false;
   bool omit_epilogue = false;
