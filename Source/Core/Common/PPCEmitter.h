@@ -219,6 +219,33 @@ public:
       }
     }
   }
+  void AddSImm32(GPR rt, GPR ra, s32 imm)
+  {
+    if (imm == 0)
+    {
+      if (ra != rt)
+      {
+        MoveReg(rt, ra);
+      }
+      return;
+    }
+    u32 repr = Common::BitCast<u32>(imm);
+    u16 upper_half_u = u16(repr >> 16);
+    s16 lower_half = Common::BitCast<s16>(u16(repr & 0xffff));
+    // account for sign extension
+    if (lower_half < 0)
+    {
+      upper_half_u += 1;
+    }
+    if (upper_half_u != 0)
+    {
+      ADDIS(rt, ra, Common::BitCast<s16>(upper_half_u));
+    }
+    if (lower_half != 0)
+    {
+      ADDI(rt, upper_half_u ? rt : ra, lower_half);
+    }
+  }
 
   // === reg-reg integer instructions ===
   void OR(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 444); }

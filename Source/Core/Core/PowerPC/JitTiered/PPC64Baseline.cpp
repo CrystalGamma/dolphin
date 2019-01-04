@@ -225,6 +225,24 @@ void PPC64BaselineCompiler::Compile(u32 addr,
         reg_cache.SetCR0(this, rt);
       }
     }
+    else if (inst.OPCD == 11)
+    {
+      // cmpi: sign extension of input is important here
+      GPR ra = reg_cache.GetGPR(this, SEXT_R + inst.RA);
+      if (inst.SIMM_16 == 0)
+      {
+        STD(ra, reg_cache.GetPPCState(),
+            s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
+      }
+      else
+      {
+        GPR scratch = reg_cache.GetScratch(this);
+        AddSImm32(scratch, ra, -inst.SIMM_16);
+        // do NOT sign-extend the output of compares!
+        STD(scratch, reg_cache.GetPPCState(),
+            s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
+      }
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
