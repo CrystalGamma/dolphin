@@ -67,7 +67,12 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 {
   address = addr;
   reg_cache = RegisterCache();
-  reg_cache.EstablishStackFrame(this);
+  u8 save_regs = 3 + guest_instructions.size() / 2;
+  if (guest_instructions.size() > 30)
+  {
+    save_regs = 18;
+  }
+  reg_cache.EstablishStackFrame(this, save_regs);
 
   bool float_checked = false;
   bool omit_epilogue = false;

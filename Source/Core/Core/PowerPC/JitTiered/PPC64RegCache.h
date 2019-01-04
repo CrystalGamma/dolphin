@@ -102,7 +102,7 @@ struct RegisterCache
   void BindGPR(GPR host_gpr, u16 specifier);
   void InvalidateAllRegisters();
 
-  void EstablishStackFrame(PPC64BaselineCompiler* comp);
+  void EstablishStackFrame(PPC64BaselineCompiler* comp, u8 save_regs);
   void FlushHostRegister(PPCEmitter* emit, GPR gpr);
   void FlushAllRegisters(PPCEmitter* emit);
 

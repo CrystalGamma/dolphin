@@ -15,16 +15,23 @@ static constexpr s16 GPROffset(u32 i)
   return s16(offsetof(PowerPC::PowerPCState, gpr) + 4 * i);
 }
 
-void RegisterCache::EstablishStackFrame(PPC64BaselineCompiler* comp)
+void RegisterCache::EstablishStackFrame(PPC64BaselineCompiler* comp, u8 save_regs)
 {
-  ASSERT(saved_regs == 0);
-  // allocate stack frame, save caller registers
+  ASSERT(saved_regs == 0 && save_regs >= 3 && save_regs <= 18);
+  // save return pointer
   comp->MFSPR(PPCEmitter::R0, PPCEmitter::SPR_LR);
   comp->STD(PPCEmitter::R0, PPCEmitter::R1, 16);
-  saved_regs = 3;
+
+  // save caller registers and write back-chain word
+  saved_regs = save_regs;
   comp->relocations.push_back(
       comp->B(PPCEmitter::BR_LINK, comp->offsets.save_gprs + (18 - saved_regs) * 4));
   comp->STD(PPCEmitter::R1, PPCEmitter::R1, -32 - 8 * saved_regs, PPCEmitter::UPDATE);
+  for (u8 i = 32 - save_regs; i < 32; ++i)
+  {
+    reg_state[i] = FREE;
+  }
+
   // copy our variables
   comp->MoveReg(PPCEmitter::R31, PPCEmitter::R5);
   reg_state[5] = FREE;
@@ -32,8 +39,6 @@ void RegisterCache::EstablishStackFrame(PPC64BaselineCompiler* comp)
   comp->ADDI(PPCEmitter::R30, PPCEmitter::R6, 0x4000);
   reg_state[6] = FREE;
   reg_state[30] = TOC_PTR;
-
-  reg_state[29] = FREE;
 }
 
 void RegisterCache::SetCR0(PPCEmitter* emit, GPR host_gpr)
@@ -262,6 +267,7 @@ void RegisterCache::FlushHostRegister(PPCEmitter* emit, GPR host_gpr)
   {
     emit->STW(host_gpr, ppcs, GPROffset(GetGuestRegister(host_gpr)));
     reg_state[host_gpr] &= ~FLAG_GUEST_UNSAVED;
+    INFO_LOG(DYNA_REC, "spilling guest GPR %u", u32(host_gpr));
   }
 }
 
