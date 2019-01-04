@@ -283,6 +283,28 @@ void RegisterCache::FlushAllRegisters(PPCEmitter* emit)
   }
 }
 
+void RegisterCache::ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush,
+                                         u32 gprs_to_invalidate)
+{
+  for (u8 i = 0; i < 32; ++i)
+  {
+    GPR host_reg = static_cast<GPR>(i);
+    if (!HoldsGuestRegister(host_reg))
+    {
+      continue;
+    }
+    u8 guest_reg = GetGuestRegister(host_reg);
+    if (gprs_to_flush & (1 << guest_reg))
+    {
+      FlushHostRegister(emit, host_reg);
+    }
+    if (gprs_to_invalidate & (1 << guest_reg))
+    {
+      reg_state[i] = FREE;
+    }
+  }
+}
+
 GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
 {
   ASSERT(num_parameters <= 10);

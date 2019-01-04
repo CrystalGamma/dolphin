@@ -105,6 +105,7 @@ struct RegisterCache
   void EstablishStackFrame(PPC64BaselineCompiler* comp, u8 save_regs);
   void FlushHostRegister(PPCEmitter* emit, GPR gpr);
   void FlushAllRegisters(PPCEmitter* emit);
+  void ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush, u32 gprs_to_invalidate);
 
   GPR GetGPR(PPCEmitter* emit, u16 specifier);
   GPR GetScratch(PPCEmitter* emit, u16 specifier = SCRATCH);

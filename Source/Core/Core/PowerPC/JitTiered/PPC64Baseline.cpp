@@ -335,9 +335,18 @@ void PPC64BaselineCompiler::RelocateAll(u32 offset)
 
 void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
-  // fallbacks may do anything with the guest registers, so empty the cache
-  reg_cache.FlushAllRegisters(this);
-  reg_cache.InvalidateAllRegisters();
+  u32 gprs_to_invalidate = 0;
+  if (opinfo.flags & FL_OUT_D)
+  {
+    gprs_to_invalidate |= 1 << inst.RD;
+  }
+  if (opinfo.flags & FL_OUT_A)
+  {
+    gprs_to_invalidate |= 1 << inst.RA;
+  }
+  // special case is stmw, which uses more guest GPRs than its encoding lets on
+  reg_cache.ReduceGuestRegisters(this, 0xffffffff,
+                                 inst.OPCD != 46 ? gprs_to_invalidate : 0xffffffff);
   GPR ppcs = reg_cache.GetPPCState();
   GPR scratch = reg_cache.GetScratch(this);
   // set PC + NPC
