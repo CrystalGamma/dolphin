@@ -99,7 +99,8 @@ void RegisterCache::InvalidateAllRegisters()
 GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
 {
   INFO_LOG(DYNA_REC, "getting 0x%x", u32(specifier));
-  ASSERT(specifier >= DIRTY_R && specifier < SEXT_R + 32);
+  ASSERT((specifier & ~FLAG_GUEST_UNSAVED) >= DIRTY_R &&
+         (specifier & ~FLAG_GUEST_UNSAVED) < SEXT_R + 32);
   const u8 want_state = specifier & 96;
   u8 reg = specifier & 31;
   bool found_vacancy = false;

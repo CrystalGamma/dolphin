@@ -225,8 +225,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       FallbackToInterpreter(inst, *opinfo);
     }
     reg_cache.ReleaseRegisters();
-    reg_cache.FlushAllRegisters(this);
-    reg_cache.InvalidateAllRegisters();
     address += 4;
   }
   if (!omit_epilogue)
@@ -237,7 +235,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     STW(scratch, ppcs, OFF_PC);
     STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
     LWZ(scratch, ppcs, OFF_DOWNCOUNT);
-    ADDI(scratch, ppcs, -s16(downcount));
+    ADDI(scratch, scratch, -s16(downcount));
     STW(scratch, ppcs, OFF_DOWNCOUNT);
     const bool block_end = JitTieredGeneric::IsRedispatchInstruction(guest_instructions.back());
     reg_cache.PrepareReturn(this, 1);
@@ -260,7 +258,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     STW(scratch, ppcs, OFF_DOWNCOUNT);
     fexit.reg_cache.PrepareReturn(this, 1);
     LoadUnsignedImmediate(fexit.reg_cache.GetReturnRegister(0), 0);
-    RestoreRegistersReturn(reg_cache.saved_regs);
+    RestoreRegistersReturn(fexit.reg_cache.saved_regs);
   }
 
   for (auto& pair : exits)
@@ -278,7 +276,7 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   if (jump.flags & RAISE_FPU_EXC)
   {
     LWZ(scratch, ppcs, OFF_EXCEPTIONS);
-    ORI(scratch, ppcs, u16(EXCEPTION_FPU_UNAVAILABLE));
+    ORI(scratch, scratch, u16(EXCEPTION_FPU_UNAVAILABLE));
     STW(scratch, ppcs, OFF_EXCEPTIONS);
   }
   if (jump.flags & SKIP)
