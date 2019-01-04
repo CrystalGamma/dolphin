@@ -144,7 +144,7 @@ protected:
   static u32 InterpreterExecutor(JitTieredGeneric* self, u32 offset,
                                  PowerPC::PowerPCState* ppcState, void* toc)
   {
-    return self->InterpretBlock(&self->next_report.instructions[offset]) ? BLOCK_OVERRUN : 0;
+    return InterpretBlock(&self->next_report.instructions[offset]) ? BLOCK_OVERRUN : 0;
   }
 
   void CompactInterpreterBlocks(BaselineReport* report, bool keep_old_blocks);
@@ -193,6 +193,7 @@ protected:
 class JitTieredCommon : public JitTieredGeneric
 {
 public:
+  JitTieredCommon();
   virtual void Run() final;
 
 protected:
@@ -214,6 +215,8 @@ protected:
   void CPUDoReport(bool wait, bool hint);
   virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
+  static u32 DropLockBeforeInterpreting(JitTieredGeneric* self, u32 offset,
+                                        PowerPC::PowerPCState* ppcState, void* toc);
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,

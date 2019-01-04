@@ -13,6 +13,19 @@
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/PowerPC.h"
 
+JitTieredCommon::JitTieredCommon()
+{
+  // interpreter_executor = DropLockBeforeInterpreting;
+}
+
+/*u32 JitTieredCommon::DropLockBeforeInterpreting(JitTieredGeneric *self, u32 offset,
+PowerPC::PowerPCState *ppcState, void *toc) {
+  // interpreter blocks cannot be reclaimed by JIT threads, so drop our lock
+  // without this, the CPU thread spends ~40% of its time waiting on mutexes
+  static_cast<JitTieredCommon*>(self)->cpu_thread_lock.unlock();
+  return JitTieredGeneric::InterpreterExecutor(self, offset, ppcState, toc);
+}*/
+
 void JitTieredCommon::CPUDoReport(bool wait, bool hint)
 {
   if (cpu_thread_lock.owns_lock())
@@ -85,14 +98,14 @@ void JitTieredCommon::Run()
 
     CoreTiming::Advance();
     PowerPC::CheckExternalExceptions();
+    if (!cpu_thread_lock.owns_lock())
+    {
+      cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+    }
 
     do
     {
       const u32 start_addr = PC;
-      if (!cpu_thread_lock.owns_lock())
-      {
-        cpu_thread_lock = std::unique_lock(disp_cache_mutex);
-      }
       DispatchCacheEntry* cache_entry = FindBlock(start_addr);
       const u32 usecount = cache_entry->usecount + 1;
       cache_entry->usecount = usecount;
@@ -102,9 +115,14 @@ void JitTieredCommon::Run()
       {
         HandleOverrun(cache_entry);
       }
-      if (usecount >= REPORT_THRESHOLD || flags & REPORT_IMMEDIATELY)
+      if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
+          flags & REPORT_IMMEDIATELY)
       {
         CPUDoReport(flags & REPORT_IMMEDIATELY, true);
+        if (!cpu_thread_lock.owns_lock())
+        {
+          cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+        }
       }
       PowerPC::CheckExceptions();
       PowerPC::CheckBreakPoints();
