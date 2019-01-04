@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Core/PowerPC/JitCommon/JitBase.h"
+#include "Core/PowerPC/JitCommon/JitCache.h"
 #include "Core/PowerPC/PowerPC.h"
 
 /// generic path of the Tiered JIT framework.
@@ -175,6 +176,8 @@ protected:
   std::bitset<VICTIM_SETS * VICTIM_WAYS> victim_second_chance{};
   /// clocks for the WS-Clock eviction algorithm
   std::array<u8, VICTIM_SETS> victim_clocks{};
+
+  ValidBlockBitSet valid_block;
 
   BaselineReport next_report;
 

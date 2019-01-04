@@ -29,10 +29,20 @@ static bool overlaps(u32 block_start, u32 block_len, u32 first_inval, u32 last_i
 
 void JitTieredGeneric::InvalidateICache(const u32 address, const u32 size, const bool forced)
 {
+  // fast path for guest cacheline invalidations
+  if (size == 32)
+  {
+    if (!valid_block.Test(address >> 5))
+    {
+      return;
+    }
+    valid_block.Clear(address >> 5);
+  }
   if (size == 0)
   {
     return;  // zero-sized invalidations don't have a 'last invalidated byte' so exit early
   }
+
   const u32 end = address + size - 1;
   DEBUG_LOG(DYNA_REC, "%08x: invalidate %08x–%08x", PC, address, end);
   Bloom new_bloom = BloomRange(address, end);
@@ -189,6 +199,7 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredGeneric::LookupBlock(DispatchCach
   next_report.instructions.push_back({});
   entry->executor = interpreter_executor;
   entry->bloom = BloomCacheline(address);
+  valid_block.Set(address >> 5);
   entry->length = 0;
   entry->usecount = 1;
   return entry;
@@ -301,6 +312,7 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
     if ((PC & 31) == 0)
     {
       cache_entry->bloom |= BloomCacheline(PC);
+      valid_block.Set(PC >> 5);
     }
     NPC = PC + 4;
     if (uses_fpu && !MSR.FP)
