@@ -160,6 +160,10 @@ std::unique_ptr<HostDisassembler> GetNewDisassembler(const std::string& arch)
     return std::make_unique<HostDisassemblerLLVM>("aarch64-none-unknown", 4, "cortex-a57");
   if (arch == "armv7")
     return std::make_unique<HostDisassemblerLLVM>("armv7-none-unknown", 4, "cortex-a15");
+  if (arch == "powerpc64le")
+    return std::make_unique<HostDisassemblerLLVM>("powerpc64le-none-unknown");
+  if (arch == "powerpc64")
+    return std::make_unique<HostDisassemblerLLVM>("powerpc64-none-unknown");
 #elif defined(_M_X86)
   if (arch == "x86")
     return std::make_unique<HostDisassemblerX86>();

@@ -64,6 +64,30 @@ JitTieredPPC64::JitTieredPPC64()
   on_thread_baseline = false;
 }
 
+int JitTieredPPC64::GetHostCode(u32* address, const u8** code, u32* code_size)
+{
+  std::lock_guard<std::mutex> disp_lock(block_db_mutex);
+  auto iter = jit_block_db.upper_bound(*address);
+  while (iter != jit_block_db.begin())
+  {
+    --iter;
+    if (u64(iter->first) + 0x40000 < *address)
+    {
+      // no block is longer than 1 << 16 instructions
+      *code_size = 0;
+      return 2;
+    }
+    if (iter->first + iter->second.instructions.size() > *address)
+    {
+      *address = iter->first;
+      *code_size = 20;
+      return 0;
+    }
+  }
+  *code_size = 0;
+  return 2;
+}
+
 JitTieredGeneric::DispatchCacheEntry* JitTieredPPC64::LookupBlock(DispatchCacheEntry* entry,
                                                                   u32 address)
 {

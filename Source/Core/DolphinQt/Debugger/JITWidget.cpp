@@ -52,6 +52,12 @@ JITWidget::JITWidget(QWidget* parent) : QDockWidget(parent)
   m_disassembler = GetNewDisassembler("x86");
 #elif defined(_M_ARM_64)
   m_disassembler = GetNewDisassembler("aarch64");
+#elif defined(_M_PPC64)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  m_disassembler = GetNewDisassembler("powerpc64le");
+#else
+  m_disassembler = GetNewDisassembler("powerpc64");
+#endif
 #else
   m_disassembler = GetNewDisassembler("UNK");
 #endif
