@@ -243,6 +243,24 @@ void PPC64BaselineCompiler::Compile(u32 addr,
             s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
       }
     }
+    else if (inst.OPCD == 10)
+    {
+      // cmpli: zero extension of input is important here
+      GPR ra = reg_cache.GetGPR(this, ZEXT_R + inst.RA);
+      if (inst.UIMM == 0)
+      {
+        STD(ra, reg_cache.GetPPCState(),
+            s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
+      }
+      else
+      {
+        GPR scratch = reg_cache.GetScratch(this);
+        AddSImm32(scratch, ra, -s32(inst.UIMM));
+        // do NOT sign-extend the output of compares!
+        STD(scratch, reg_cache.GetPPCState(),
+            s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
+      }
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
