@@ -87,12 +87,12 @@ public:
     BR_ALWAYS = 20,
     BR_TRUE = 12,
     BR_FALSE = 4,
-    BR_DEC_ZERO = 16,
-    BR_DEC_NZ = 18,
-    BR_DEC_ZERO_TRUE = 10,
+    BR_DEC_NZ = 16,
+    BR_DEC_ZERO = 18,
     BR_DEC_NZ_TRUE = 8,
-    BR_DEC_ZERO_FALSE = 2,
+    BR_DEC_ZERO_TRUE = 10,
     BR_DEC_NZ_FALSE = 0,
+    BR_DEC_ZERO_FALSE = 2,
   };
 
   /// hints for bclr and bcctr
@@ -301,6 +301,7 @@ public:
   // === ≤32-bit load/store ===
   void LWZ(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(32, rt, ra, disp); }
   void STW(GPR rs, GPR ra, s16 disp) { DFormInstructionSigned(36, rs, ra, disp); }
+  void STWU(GPR rs, GPR ra, s16 disp) { DFormInstructionSigned(37, rs, ra, disp); }
 
   void LBZX(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 87); }
   void STBX(GPR rs, GPR ra, GPR rb) { XFormInstruction(31, rs, ra, rb, 215); }

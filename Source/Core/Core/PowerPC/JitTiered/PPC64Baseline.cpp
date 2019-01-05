@@ -272,6 +272,38 @@ void PPC64BaselineCompiler::Compile(u32 addr,
             s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
       }
     }
+    else if (inst.OPCD == 46 && this_inst_bails.empty())
+    {
+      // lmw – FIXME: like the Interpreter version, this implementation does not roll back on
+      // failure keep all registers below RT
+      u32 register_mask = ~((u32(1) << inst.RD) - 1);
+      GPR mem_address = reg_cache.GetScratch(this);
+      ADDI(mem_address, reg_cache.GetGPR(this, DIRTY_R + inst.RA), inst.SIMM_16);
+      // zero-extend the guest address
+      RLWINM(mem_address, mem_address, 0, 0, 31);
+
+      reg_cache.ReduceGuestRegisters(this, register_mask, register_mask);
+
+      GPR scratch = reg_cache.GetScratch(this);
+      // write number of registers to load into CTR
+      LoadUnsignedImmediate(scratch, 32 - inst.RD);
+      MTSPR(SPR_CTR, scratch);
+      // scratch now used for address of GPR in ppcState
+      GPR ppcs = reg_cache.GetPPCState();
+      // reduce the offset by 4 to account for STWU updating the address before storing
+      ADDI(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, gpr) + 4 * inst.RD - 4));
+      GPR base = reg_cache.GetMemoryBase(this);
+      GPR value = reg_cache.GetScratch(this);
+      // loop:
+      exits.emplace_back(this->instructions.size(),
+                         Exit{reg_cache, downcount - u32(opinfo->numCycles), FASTMEM_BAIL, 0});
+      LWBRX(value, mem_address, base);
+      ADDI(mem_address, mem_address, 4);
+      STWU(value, scratch, 4);
+      BC(BR_DEC_NZ, 0, BR_NORMAL, -12);
+      // don't need to load the last register again
+      reg_cache.BindGPR(value, ZEXT_R + 31);
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
@@ -412,7 +444,7 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   {
     gprs_to_invalidate |= 1 << inst.RA;
   }
-  // special case is stmw, which uses more guest GPRs than its encoding lets on
+  // special case is lmw, which uses more guest GPRs than its encoding lets on
   reg_cache.ReduceGuestRegisters(this, 0xffffffff,
                                  inst.OPCD != 46 ? gprs_to_invalidate : 0xffffffff);
   GPR ppcs = reg_cache.GetPPCState();
