@@ -343,6 +343,7 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     {
       ASSERT(jump.flags & RAISE_ALIGNMENT_EXCEPTION);
       exc = u16(EXCEPTION_ALIGNMENT);
+      STW(static_cast<GPR>(jump.link_address), ppcs, SPROffset(SPR_DAR));
     }
     LWZ(scratch, ppcs, OFF_EXCEPTIONS);
     ORI(scratch, scratch, exc);
@@ -600,6 +601,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
 
   if (use_slowmem)
   {
+    WARN_LOG(DYNA_REC, "compiling slowmem access @ %08x", address);
     s16 offset = 0;
     switch (op >> 1)
     {
@@ -663,23 +665,6 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
       LoadUnsignedImmediate(addr_reg, Common::BitCast<u32>(s32(inst.SIMM_16)));
     }
   }
-  // check alignment
-  const GPR align_scratch = reg_cache.GetScratch(this);
-  u16 align_mask = 0;
-  if ((op >> 1) == 0 || (op >> 1) == 2)
-  {
-    align_mask = 3;
-  }
-  else if ((op >> 1) >= 4 && (op >> 1) <= 6)
-  {
-    align_mask = 1;
-  }
-  if (align_mask != 0)
-  {
-    ANDI_Rc(align_scratch, addr_reg, align_mask);
-    exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount,
-                                                    EXCEPTION | RAISE_ALIGNMENT_EXCEPTION, 0});
-  }
   GPR rst = R0;
   if (!use_slowmem)
   {
@@ -701,8 +686,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     LDX(base, base, reg_cache.GetToC());
 
     exits.emplace_back(this->instructions.size(),
-                       Exit{reg_cache, address, downcount, EXCEPTION | FASTMEM_BAIL, 0});
-    LWZ(base, R0, 0);
+                       Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
 
     switch (op >> 1)
     {

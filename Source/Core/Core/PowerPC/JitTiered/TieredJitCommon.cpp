@@ -152,6 +152,7 @@ void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
   if (cache_entry->executor != interpreter_executor)
   {
     INFO_LOG(DYNA_REC, "JIT block overrun @ %08x", start_addr);
+    next_report.invalidation_bloom |= BloomCacheline(start_addr);
     {
       std::lock_guard lock(block_db_mutex);
       // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
@@ -305,7 +306,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
         reported_blocks->erase(reported_block);
       }
     }
-    bool invalidated = false;
+    bool invalidated = false, bailed = false;
     if (jit_len != 0)
     {
       for (size_t i = bail_start; i < num_bails; ++i)
@@ -316,7 +317,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
           // this and all following are at higher addresses
           break;
         }
-        invalidated = true;
+        bailed = true;
         block.bails.push_back(bail);
       }
       if (reported_len > jit_len)
@@ -349,7 +350,7 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
       invalidated = true;
       break;
     }
-    if (invalidated)
+    if (invalidated || bailed)
     {
       if (reported_len != 0)
       {
@@ -366,7 +367,10 @@ void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* inva
                  block.runcount);
         block_counters.emplace(addr, block.runcount);
       }
-      block.executor = nullptr;
+      if (invalidated)
+      {
+        block.executor = nullptr;
+      }
     }
     else
     {
