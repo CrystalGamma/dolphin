@@ -83,7 +83,8 @@ int JitTieredPPC64::GetHostCode(u32* address, const u8** code, u32* code_size)
     if (iter->first + iter->second.instructions.size() > *address)
     {
       *address = iter->first;
-      *code_size = 20;
+      *code = reinterpret_cast<const u8*>(iter->second.executor);
+      *code_size = iter->second.host_length;
       return 0;
     }
   }
@@ -178,6 +179,7 @@ void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
   codespace.Emit(compiler.instructions);
   block.offset = current_offset;
   block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));
+  block.host_length = len;
   offset_in_cell += len;
   INFO_LOG(DYNA_REC, "created executable code at 0x%016" PRIx64 " (offset %u, size %zu)",
            u64(block.executor), current_offset, compiler.instructions.size());

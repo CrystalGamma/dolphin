@@ -214,6 +214,7 @@ protected:
     std::vector<Bail> bails;
     /// pair contains (fault address, handler address)
     std::vector<std::pair<uintptr_t, uintptr_t>> fault_handlers;
+    u32 host_length;
   };
   struct ReportedBlock
   {

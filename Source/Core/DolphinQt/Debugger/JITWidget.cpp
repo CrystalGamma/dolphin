@@ -53,10 +53,10 @@ JITWidget::JITWidget(QWidget* parent) : QDockWidget(parent)
 #elif defined(_M_ARM_64)
   m_disassembler = GetNewDisassembler("aarch64");
 #elif defined(_M_PPC64)
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-  m_disassembler = GetNewDisassembler("powerpc64le");
-#else
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
   m_disassembler = GetNewDisassembler("powerpc64");
+#else
+  m_disassembler = GetNewDisassembler("powerpc64le");
 #endif
 #else
   m_disassembler = GetNewDisassembler("UNK");

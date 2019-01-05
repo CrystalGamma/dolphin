@@ -452,7 +452,8 @@ bool JitTieredCommon::BaselineIteration()
                    current_offset,
                    std::move(insts),
                    std::move(block.bails),
-                   {}};
+                   {},
+                   0};
     BaselineCompile(address, std::move(jb));
   }
 
