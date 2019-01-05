@@ -29,9 +29,7 @@ enum : u16
   /// not available for register caching, but can be claimed using GetArgumentRegister and
   /// GetReturnRegister
   ABI = 7,
-  /// volatile register during call preparation. available for scratch allocation, but not guest
-  /// registers
-  ABI_FREE = 8,
+  MEMORY_BASE = 8,
   DIRTY_R = 32,
   ZEXT_R = 64,
   SEXT_R = 96,
@@ -53,7 +51,8 @@ struct RegisterCache
     reg_state[0] = RESERVED;
     // register 1 is always the stack pointer
     reg_state[1] = RESERVED;
-    // register 2 is supposed to be the TOC pointer, but it's just a volatile register AFAICS
+    // register 2 is supposed to be the TOC pointer. we use it for the current memory base, if code
+    // does any fastmem accesses
     reg_state[2] = RESERVED;
     // register 3 is the first argument, starts out as the JIT pointer, which we don't use
     reg_state[3] = FREE;
@@ -111,6 +110,7 @@ struct RegisterCache
   GPR GetScratch(PPCEmitter* emit, u16 specifier = SCRATCH);
   GPR GetPPCState();
   GPR GetToC();
+  GPR GetMemoryBase(PPCEmitter* emit);
 
   /// invalidates all non-LOCKED register references
   GPR PrepareCall(PPCEmitter* emit, u8 num_parameters);

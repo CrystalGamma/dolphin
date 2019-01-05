@@ -676,14 +676,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     {
       rst = reg_cache.GetScratch(this);
     }
-    GPR base = reg_cache.GetScratch(this);
-    LWZ(base, reg_cache.GetPPCState(), s16(offsetof(PowerPC::PowerPCState, msr)));
-    // make it so that we have 0 if address translation disabled and 8 if enabled
-    RLWINM(base, base, 31, 28, 28);
-    // add offset to physical_base
-    ADDI(base, base, s16(s32(offsetof(TableOfContents, physical_base)) - 0x4000));
-    // use indexed load to fetch the base pointer
-    LDX(base, base, reg_cache.GetToC());
+    GPR base = reg_cache.GetMemoryBase(this);
 
     exits.emplace_back(this->instructions.size(),
                        Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});

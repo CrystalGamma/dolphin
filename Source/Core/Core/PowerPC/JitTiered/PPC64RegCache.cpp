@@ -194,7 +194,7 @@ GPR RegisterCache::GetScratch(PPCEmitter* emit, u16 specifier)
   for (s8 i = first_search; i >= last_search; --i)
   {
     const u16 state = reg_state[i];
-    if (state == FREE || state == ABI_FREE)
+    if (state == FREE)
     {
       found_vacancy = true;
       spot = u8(i);
@@ -229,6 +229,29 @@ GPR RegisterCache::GetScratch(PPCEmitter* emit, u16 specifier)
   ERROR_LOG(DYNA_REC, "No free register to allocate scratch register");
   ASSERT(false);
   return PPCEmitter::R0;
+}
+
+GPR RegisterCache::GetMemoryBase(PPCEmitter* emit)
+{
+  for (u8 i = 0; i < 32; ++i)
+  {
+    if (reg_state[i] == MEMORY_BASE)
+    {
+      return static_cast<GPR>(i);
+    }
+  }
+  ASSERT(reg_state[2] == RESERVED);
+  const GPR base = PPCEmitter::R2;
+  emit->LWZ(base, GetPPCState(), s16(offsetof(PowerPC::PowerPCState, msr)));
+  // make it so that we have 0 if address translation disabled and 8 if enabled
+  emit->RLWINM(base, base, 31, 28, 28);
+  // add offset to physical_base
+  emit->ADDI(base, base,
+             s16(s32(offsetof(PPC64BaselineCompiler::TableOfContents, physical_base)) - 0x4000));
+  // use indexed load to fetch the base pointer
+  emit->LDX(base, base, GetToC());
+  reg_state[2] = MEMORY_BASE;
+  return base;
 }
 
 GPR RegisterCache::GetPPCState()
@@ -348,6 +371,10 @@ GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
     }
   }
 
+  if (reg_state[2] == MEMORY_BASE)
+  {
+    reg_state[2] = RESERVED;
+  }
   for (u8 i = 3; i < 3 + num_parameters; ++i)
   {
     const GPR reg = static_cast<GPR>(i);
