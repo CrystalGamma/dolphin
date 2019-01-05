@@ -213,13 +213,41 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCache
     entry.executor = block.executor;
     entry.length = block.instructions.size();
     entry.usecount = 0;
-    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x)", address, entry.offset);
+
+    for (auto& handler : block.fault_handlers)
+    {
+      INFO_LOG(DYNA_REC, "installing fault handler: 0x%" PRIxPTR " ↦ 0x%" PRIxPTR, handler.first,
+               handler.second);
+      fault_handlers.insert(handler);
+    }
 
     blockdb_lock.unlock();
+    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x)", address, entry.offset);
 
     *cache_entry = entry;
     return cache_entry;
   }
+}
+
+bool JitTieredCommon::HandleFault(uintptr_t access_address, SContext* ctx)
+{
+  // FIXME: check if we are on the CPU thread
+  if (!cpu_thread_lock.owns_lock())
+  {
+    // no JIT code running
+    return false;
+  }
+  // we have a lock on disp_cache_mutex, so we can look up the fault handlers
+  auto find_result = fault_handlers.find(ctx->CTX_NPC);
+  if (find_result == fault_handlers.end())
+  {
+    ERROR_LOG(DYNA_REC,
+              "Segfault without handler accessing 0x%" PRIx64 " @ 0x%" PRIx64 ", crashing now",
+              uintptr_t(access_address), uintptr_t(ctx->CTX_NPC));
+    return false;
+  }
+  ctx->CTX_NPC = find_result->second;
+  return true;
 }
 
 void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
@@ -419,7 +447,8 @@ bool JitTieredCommon::BaselineIteration()
                    runcount,
                    current_offset,
                    std::move(insts),
-                   std::move(block.bails)};
+                   std::move(block.bails),
+                   {}};
     BaselineCompile(address, std::move(jb));
   }
 

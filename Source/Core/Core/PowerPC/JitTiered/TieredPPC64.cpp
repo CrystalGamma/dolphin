@@ -8,6 +8,7 @@
 
 #include "Core/CoreTiming.h"
 #include "Core/HW/CPU.h"
+#include "Core/HW/Memmap.h"
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
 #include "Core/PowerPC/MMU.h"
@@ -60,6 +61,8 @@ JitTieredPPC64::JitTieredPPC64()
   toc.load_hword = PowerPC::Read_U16;
   toc.store_hword = PowerPC::Write_U16;
   toc.load_hword_sext = LoadHWord_SExt;
+  toc.physical_base = Memory::physical_base;
+  toc.logical_base = Memory::logical_base;
   current_toc = next_toc = &toc;
   on_thread_baseline = false;
 }
@@ -132,6 +135,12 @@ void JitTieredPPC64::ReclaimCell(u32 cell)
       disp_entry.Invalidate();
     }
   }
+
+  auto iter = fault_handlers.lower_bound(u64(cell_start));
+  while (iter != fault_handlers.end() && iter->first <= u64(cell_end))
+  {
+    iter = fault_handlers.erase(iter);
+  }
 }
 
 void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
@@ -156,8 +165,16 @@ void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
     offset_in_cell = current_cell % ROUTINES_INTERVAL == 0 ? routine_offsets.end : 0;
   }
   current_offset = CODESPACE_CELL_SIZE * current_cell + offset_in_cell;
-  codespace.SetOffset(current_offset / 4);
   compiler.RelocateAll(current_offset);
+
+  for (auto pair : compiler.fault_handlers)
+  {
+    uintptr_t fault_address = uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.first));
+    uintptr_t handler_address =
+        uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.second));
+    block.fault_handlers.emplace_back(fault_address, handler_address);
+  }
+  codespace.SetOffset(current_offset / 4);
   codespace.Emit(compiler.instructions);
   block.offset = current_offset;
   block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));

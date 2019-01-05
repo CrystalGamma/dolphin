@@ -104,7 +104,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       ANDI_Rc(scratch, scratch, 1 << 13);
       reg_cache.FreeGPR(scratch);
       exits.emplace_back(BC(BR_TRUE, CR0 + EQ),
-                         Exit{reg_cache, address, downcount, EXCEPTION | RAISE_FPU_EXC, 0});
+                         Exit{reg_cache, address, downcount, EXCEPTION | RAISE_FPU_EXCEPTION, 0});
       float_checked = true;
     }
 
@@ -315,7 +315,14 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 
   for (auto& pair : exits)
   {
-    SetBranchTarget(pair.first);
+    if (!(pair.second.flags & FASTMEM_BAIL))
+    {
+      SetBranchTarget(pair.first);
+    }
+    else
+    {
+      fault_handlers.emplace_back(pair.first, this->instructions.size());
+    }
     WriteExit(pair.second);
   }
 }
@@ -325,10 +332,20 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   RegisterCache rc = jump.reg_cache;
   GPR ppcs = rc.GetPPCState();
   GPR scratch = rc.GetScratch(this);
-  if (jump.flags & RAISE_FPU_EXC)
+  if (jump.flags & (RAISE_FPU_EXCEPTION | RAISE_ALIGNMENT_EXCEPTION))
   {
+    u16 exc;
+    if (jump.flags & RAISE_FPU_EXCEPTION)
+    {
+      exc = u16(EXCEPTION_FPU_UNAVAILABLE);
+    }
+    else
+    {
+      ASSERT(jump.flags & RAISE_ALIGNMENT_EXCEPTION);
+      exc = u16(EXCEPTION_ALIGNMENT);
+    }
     LWZ(scratch, ppcs, OFF_EXCEPTIONS);
-    ORI(scratch, scratch, u16(EXCEPTION_FPU_UNAVAILABLE));
+    ORI(scratch, scratch, exc);
     STW(scratch, ppcs, OFF_EXCEPTIONS);
   }
   if (jump.flags & SKIP)
@@ -578,40 +595,45 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   }
   const bool is_store = op & 4;
   const bool is_update = op & 1;
-  s16 offset = 0;
-  switch (op >> 1)
+
+  const bool use_slowmem = !bails.empty();
+
+  if (use_slowmem)
   {
-  case 0:
-    offset = s16(offsetof(TableOfContents, load_word) - 0x4000);
-    break;
-  case 1:
-    offset = s16(offsetof(TableOfContents, load_byte) - 0x4000);
-    break;
-  case 2:
-    offset = s16(offsetof(TableOfContents, store_word) - 0x4000);
-    break;
-  case 3:
-    offset = s16(offsetof(TableOfContents, store_byte) - 0x4000);
-    break;
-  case 4:
-    offset = s16(offsetof(TableOfContents, load_hword) - 0x4000);
-    break;
-  case 5:
-    offset = s16(offsetof(TableOfContents, load_hword_sext) - 0x4000);
-    break;
-  case 6:
-    offset = s16(offsetof(TableOfContents, store_hword) - 0x4000);
-    break;
-  default:
-    ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
+    s16 offset = 0;
+    switch (op >> 1)
+    {
+    case 0:
+      offset = s16(offsetof(TableOfContents, load_word) - 0x4000);
+      break;
+    case 1:
+      offset = s16(offsetof(TableOfContents, load_byte) - 0x4000);
+      break;
+    case 2:
+      offset = s16(offsetof(TableOfContents, store_word) - 0x4000);
+      break;
+    case 3:
+      offset = s16(offsetof(TableOfContents, store_byte) - 0x4000);
+      break;
+    case 4:
+      offset = s16(offsetof(TableOfContents, load_hword) - 0x4000);
+      break;
+    case 5:
+      offset = s16(offsetof(TableOfContents, load_hword_sext) - 0x4000);
+      break;
+    case 6:
+      offset = s16(offsetof(TableOfContents, store_hword) - 0x4000);
+      break;
+    default:
+      ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
+      ASSERT(false);
+    }
+    const GPR target = reg_cache.PrepareCall(this, is_store ? 2 : 1);
+    const GPR toc = reg_cache.GetToC();
+    LD(target, toc, offset);
+    reg_cache.BindCall(this);
   }
-  if (bails.empty())
-  {
-    exits.emplace_back(B(), Exit{reg_cache, address, downcount, EXCEPTION | FASTMEM_BAIL, 0});
-  }
-  ASSERT(offset != 0);
-  const GPR target = reg_cache.PrepareCall(this, is_store ? 2 : 1);
-  const GPR toc = reg_cache.GetToC();
+
   // TODO: allocate this register more smartly to eliminate moves
   const GPR addr_reg = reg_cache.GetScratch(this, is_update ? LOCKED : SCRATCH);
   if (inst.RA != 0)
@@ -641,40 +663,116 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
       LoadUnsignedImmediate(addr_reg, Common::BitCast<u32>(s32(inst.SIMM_16)));
     }
   }
-  // call the MMU function
-  LD(target, toc, offset);
-  reg_cache.BindCall(this);
-  GPR arg1 = reg_cache.GetArgumentRegister(0);
-  if (!is_store)
+  // check alignment
+  const GPR align_scratch = reg_cache.GetScratch(this);
+  u16 align_mask = 0;
+  if ((op >> 1) == 0 || (op >> 1) == 2)
   {
-    MoveReg(arg1, addr_reg);
+    align_mask = 3;
+  }
+  else if ((op >> 1) >= 4 && (op >> 1) <= 6)
+  {
+    align_mask = 1;
+  }
+  if (align_mask != 0)
+  {
+    ANDI_Rc(align_scratch, addr_reg, align_mask);
+    exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount,
+                                                    EXCEPTION | RAISE_ALIGNMENT_EXCEPTION, 0});
+  }
+  GPR rst = R0;
+  if (!use_slowmem)
+  {
+    if (is_store)
+    {
+      rst = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+    }
+    else
+    {
+      rst = reg_cache.GetScratch(this);
+    }
+    GPR base = reg_cache.GetScratch(this);
+    LWZ(base, reg_cache.GetPPCState(), s16(offsetof(PowerPC::PowerPCState, msr)));
+    // make it so that we have 0 if address translation disabled and 8 if enabled
+    RLWINM(base, base, 31, 28, 28);
+    // add offset to physical_base
+    ADDI(base, base, s16(s32(offsetof(TableOfContents, physical_base)) - 0x4000));
+    // use indexed load to fetch the base pointer
+    LDX(base, base, reg_cache.GetToC());
+
+    exits.emplace_back(this->instructions.size(),
+                       Exit{reg_cache, address, downcount, EXCEPTION | FASTMEM_BAIL, 0});
+    LWZ(base, R0, 0);
+
+    switch (op >> 1)
+    {
+    case 0:
+      LWBRX(rst, base, addr_reg);
+      break;
+    case 1:
+      LBZX(rst, base, addr_reg);
+      break;
+    case 2:
+      STWBRX(rst, base, addr_reg);
+      break;
+    case 3:
+      STBX(rst, base, addr_reg);
+      break;
+    case 4:
+      LHBRX(rst, base, addr_reg);
+      break;
+    case 5:
+      LHBRX(rst, base, addr_reg);
+      RLWINM(rst, rst, 16, 0, 15);
+      EXTSW(rst, rst);
+      SRAWI(rst, rst, 16);
+      break;
+    case 6:
+      STHBRX(rst, base, addr_reg);
+      break;
+    default:
+      ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
+      ASSERT(false);
+    }
   }
   else
   {
-    MoveReg(arg1, reg_cache.GetGPR(this, DIRTY_R + inst.RD));
-    // make sure it's properly zero-extended
-    if ((op >> 1) == 3)
+    GPR arg1 = reg_cache.GetArgumentRegister(0);
+    if (!is_store)
     {
-      RLDICL(arg1, arg1, 0, 56);
+      MoveReg(arg1, addr_reg);
     }
-    else if ((op >> 1) == 6)
+    else
     {
-      RLDICL(arg1, arg1, 0, 48);
+      MoveReg(arg1, reg_cache.GetGPR(this, DIRTY_R + inst.RD));
+      // make sure it's properly zero-extended
+      if ((op >> 1) == 3)
+      {
+        RLDICL(arg1, arg1, 0, 56);
+      }
+      else if ((op >> 1) == 6)
+      {
+        RLDICL(arg1, arg1, 0, 48);
+      }
+      else if ((op >> 1) == 2)
+      {
+        RLDICL(arg1, arg1, 0, 32);
+      }
+      MoveReg(reg_cache.GetArgumentRegister(1), addr_reg);
     }
-    else if ((op >> 1) == 2)
-    {
-      RLDICL(arg1, arg1, 0, 32);
-    }
-    MoveReg(reg_cache.GetArgumentRegister(1), addr_reg);
-  }
-  reg_cache.PerformCall(this, is_store ? 0 : 1);
+    reg_cache.PerformCall(this, is_store ? 0 : 1);
 
-  const GPR scratch = reg_cache.GetScratch(this);
-  const GPR ppcs = reg_cache.GetPPCState();
-  // check for exceptions
-  LWZ(scratch, ppcs, OFF_EXCEPTIONS);
-  ANDI_Rc(scratch, scratch, u16(JitTieredGeneric::EXCEPTION_SYNC));
-  exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount, EXCEPTION, 0});
+    const GPR scratch = reg_cache.GetScratch(this);
+    const GPR ppcs = reg_cache.GetPPCState();
+    // check for exceptions
+    LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+    ANDI_Rc(scratch, scratch, u16(JitTieredGeneric::EXCEPTION_SYNC));
+    exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount, EXCEPTION, 0});
+    if (!is_store)
+    {
+      rst = reg_cache.GetReturnRegister(0);
+    }
+  }
   // maintain GPR file
   if (is_update)
   {
@@ -683,6 +781,6 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   }
   if (!is_store)
   {
-    reg_cache.BindGPR(reg_cache.GetReturnRegister(0), ((op >> 1) == 5 ? SEXT_R : ZEXT_R) + inst.RD);
+    reg_cache.BindGPR(rst, ((op >> 1) == 5 ? SEXT_R : ZEXT_R) + inst.RD);
   }
 }

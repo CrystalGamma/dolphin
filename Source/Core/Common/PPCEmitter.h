@@ -140,6 +140,9 @@ public:
     RC = 1
   };
 
+  // === instruction form helpers ===
+  // these functions take their fields in encoding order, most other functions take them in
+  // assembler order (destination-first)
   void DFormInstruction(u32 opcode, GPR r1, GPR r2, u16 imm)
   {
     instructions.push_back((opcode << 26) | (u32(r1) << 21) | (u32(r2) << 16) | u32(imm));
@@ -159,6 +162,11 @@ public:
     instructions.push_back((opcode << 26) | ((bt & 31) << 21) | ((ba & 31) << 16) |
                            ((bb & 31) << 11) | (subop10 << 1));
   }
+  void MFormInstruction(u32 opcode, GPR rs, GPR ra, u32 sh, u32 mb, u32 me)
+  {
+    instructions.push_back((opcode << 26) | (u32(rs) << 21) | (u32(ra) << 16) | ((sh & 31) << 11) |
+                           ((mb & 31) << 6) | ((me & 31) << 1));
+  }
 
   // === integer immediate instructions ===
   // do not call on register 0 (use LoadSignedImmediate instead, for clarity)
@@ -176,6 +184,12 @@ public:
   void ANDIS_Rc(GPR ra, GPR rs, u16 imm) { DFormInstruction(29, rs, ra, imm); }
 
   void MULLI(GPR rt, GPR ra, s16 imm) { DFormInstructionSigned(7, rt, ra, imm); }
+
+  void RLWINM(GPR ra, GPR rs, u32 sh, u32 mb, u32 me) { MFormInstruction(21, ra, rs, sh, mb, me); }
+  void SRAWI(GPR ra, GPR rs, u32 sh)
+  {
+    XFormInstruction(31, rs, ra, static_cast<GPR>(sh & 31), 824);
+  }
 
   void LoadSignedImmediate(GPR rt, s32 imm)
   {
@@ -288,6 +302,15 @@ public:
   void LWZ(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(32, rt, ra, disp); }
   void STW(GPR rs, GPR ra, s16 disp) { DFormInstructionSigned(36, rs, ra, disp); }
 
+  void LBZX(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 87); }
+  void STBX(GPR rs, GPR ra, GPR rb) { XFormInstruction(31, rs, ra, rb, 215); }
+
+  void LHBRX(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 790); }
+  void STHBRX(GPR rs, GPR ra, GPR rb) { XFormInstruction(31, rs, ra, rb, 918); }
+
+  void LWBRX(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 534); }
+  void STWBRX(GPR rs, GPR ra, GPR rb) { XFormInstruction(31, rs, ra, rb, 662); }
+
   // === branch ===
   // addr must fit into 26 bits (including sign)
   FixupBranch B(BranchFlags flags = BR_NORMAL, s32 addr = 0)
@@ -368,6 +391,9 @@ public:
   {
     DFormInstruction(62, rs, ra, Common::BitCast<u16>(disp) | u16(update));
   }
+
+  void LDX(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 21); }
+  void STDX(GPR rs, GPR ra, GPR rb) { XFormInstruction(31, rs, ra, rb, 149); }
 
   void EXTSW(GPR ra, GPR rs) { XFormInstruction(31, rs, ra, R0, 986); }
 

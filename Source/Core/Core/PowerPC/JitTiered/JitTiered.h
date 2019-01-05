@@ -212,6 +212,8 @@ protected:
     std::vector<DecodedInstruction> instructions;
     /// this should be sorted.
     std::vector<Bail> bails;
+    /// pair contains (fault address, handler address)
+    std::vector<std::pair<uintptr_t, uintptr_t>> fault_handlers;
   };
   struct ReportedBlock
   {
@@ -224,6 +226,7 @@ protected:
   void CPUDoReport(bool wait, bool hint);
   virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
+  bool HandleFault(uintptr_t access_address, SContext* ctx);
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
@@ -242,6 +245,8 @@ protected:
   Bloom old_bloom = BloomNone();
 
   void* current_toc = nullptr;
+
+  std::map<uintptr_t, uintptr_t> fault_handlers;
 
   /// whether to run the Baseline JIT on the CPU thread
   /// (override with false in subclasses, except for debugging)

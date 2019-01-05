@@ -26,8 +26,15 @@ public:
     u16 (*load_hword)(u32 addr);
     s16 (*load_hword_sext)(u32 addr);
     void (*store_hword)(u16 val, u32 addr);
+    void* physical_base;
+    void* logical_base;
     std::array<void (*)(UGeckoInstruction), 64 + 4 * 1024 + 32> fallback_table;
   };
+  static_assert(offsetof(TableOfContents, logical_base) -
+                        offsetof(TableOfContents, physical_base) ==
+                    8,
+                "JIT code requires the pointer to logical memmap 8 bytes after the pointer to "
+                "physical memmap");
   struct CommonRoutineOffsets
   {
     u32 save_gprs;
@@ -44,6 +51,7 @@ public:
 
   CommonRoutineOffsets offsets{};
   std::vector<size_t> relocations;
+  std::vector<std::pair<size_t, size_t>> fault_handlers;
 
 private:
   enum : u32
@@ -53,8 +61,9 @@ private:
     SKIP = 2,
     JUMPSPR = 4,
     EXCEPTION = 8,
-    RAISE_FPU_EXC = 16,
-    FASTMEM_BAIL = 32
+    RAISE_FPU_EXCEPTION = 16,
+    RAISE_ALIGNMENT_EXCEPTION = 32,
+    FASTMEM_BAIL = 64
   };
 
   struct Exit
