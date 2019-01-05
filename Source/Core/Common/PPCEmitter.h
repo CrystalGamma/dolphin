@@ -300,6 +300,7 @@ public:
 
   // === ≤32-bit load/store ===
   void LWZ(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(32, rt, ra, disp); }
+  void LWZU(GPR rt, GPR ra, s16 disp) { DFormInstructionSigned(33, rt, ra, disp); }
   void STW(GPR rs, GPR ra, s16 disp) { DFormInstructionSigned(36, rs, ra, disp); }
   void STWU(GPR rs, GPR ra, s16 disp) { DFormInstructionSigned(37, rs, ra, disp); }
 
