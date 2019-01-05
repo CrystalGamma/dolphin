@@ -200,7 +200,6 @@ protected:
 class JitTieredCommon : public JitTieredGeneric
 {
 public:
-  JitTieredCommon();
   virtual void Run() final;
 
 protected:
@@ -225,8 +224,6 @@ protected:
   void CPUDoReport(bool wait, bool hint);
   virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
-  static u32 DropLockBeforeInterpreting(JitTieredGeneric* self, u32 offset,
-                                        PowerPC::PowerPCState* ppcState, void* toc);
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
@@ -249,11 +246,6 @@ protected:
   /// whether to run the Baseline JIT on the CPU thread
   /// (override with false in subclasses, except for debugging)
   bool on_thread_baseline = true;
-
-  u32 (*enter_baseline_block)(JitTieredCommon* self, u32 offset, PowerPC::PowerPCState* ppcState,
-                              void* instrumentation_buffer) = nullptr;
-  u32 (*enter_optimized_block)(JitTieredCommon* self, u32 offset,
-                               PowerPC::PowerPCState* ppcState) = nullptr;
 
   // === dispatch cache locking ===
   /// holds a lock on disp_cache_mutex most of the time

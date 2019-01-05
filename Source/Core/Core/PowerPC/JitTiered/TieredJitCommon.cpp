@@ -13,19 +13,6 @@
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/PowerPC.h"
 
-JitTieredCommon::JitTieredCommon()
-{
-  // interpreter_executor = DropLockBeforeInterpreting;
-}
-
-/*u32 JitTieredCommon::DropLockBeforeInterpreting(JitTieredGeneric *self, u32 offset,
-PowerPC::PowerPCState *ppcState, void *toc) {
-  // interpreter blocks cannot be reclaimed by JIT threads, so drop our lock
-  // without this, the CPU thread spends ~40% of its time waiting on mutexes
-  static_cast<JitTieredCommon*>(self)->cpu_thread_lock.unlock();
-  return JitTieredGeneric::InterpreterExecutor(self, offset, ppcState, toc);
-}*/
-
 void JitTieredCommon::CPUDoReport(bool wait, bool hint)
 {
   if (cpu_thread_lock.owns_lock())
