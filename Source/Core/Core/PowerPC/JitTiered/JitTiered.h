@@ -200,6 +200,7 @@ protected:
 class JitTieredCommon : public JitTieredGeneric
 {
 public:
+  JitTieredCommon() { interpreter_executor = CheckBPAndInterpret; }
   virtual void Run() final;
 
 protected:
@@ -224,6 +225,9 @@ protected:
     std::vector<Bail> bails;
   };
 
+  static u32 CheckBPAndInterpret(JitTieredGeneric* self, u32 offset,
+                                 PowerPC::PowerPCState* ppcState, void* toc);
+
   void CPUDoReport(bool wait, bool hint);
   virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
@@ -246,6 +250,8 @@ protected:
   Bloom old_bloom = BloomNone();
 
   void* current_toc = nullptr;
+
+  bool breakpoint_handled = false;
 
   std::map<uintptr_t, uintptr_t> fault_handlers;
 

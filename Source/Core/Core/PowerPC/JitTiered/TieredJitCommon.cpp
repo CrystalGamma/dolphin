@@ -65,6 +65,31 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
   }
 }
 
+u32 JitTieredCommon::CheckBPAndInterpret(JitTieredGeneric* self, u32 offset,
+                                         PowerPC::PowerPCState* ppcState, void* toc)
+{
+  // on baseline code checking for breakpoints can take ≥10% of the CPU thread time if it is done at
+  // every block. instead we only check on interpreter blocks (which are slow anyway) and reject JIT
+  // blocks that contain breakpoints
+  if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
+  {
+    JitTieredCommon* xself = static_cast<JitTieredCommon*>(self);
+    if (!xself->breakpoint_handled)
+    {
+      // we haven't stopped at this breakpoint yet
+      PowerPC::CheckBreakPoints();
+      xself->breakpoint_handled = true;
+      return 0;
+    }
+    else
+    {
+      // we already stopped for this one, stop again at the next breakpoint
+      xself->breakpoint_handled = false;
+    }
+  }
+  return InterpreterExecutor(self, offset, ppcState, toc);
+}
+
 void JitTieredCommon::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
@@ -120,8 +145,10 @@ void JitTieredCommon::Run()
           cpu_thread_lock = std::unique_lock(disp_cache_mutex);
         }
       }
-      PowerPC::CheckExceptions();
-      PowerPC::CheckBreakPoints();
+      if (PowerPC::ppcState.Exceptions)
+      {
+        PowerPC::CheckExceptions();
+      }
     } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
   }
   if (cpu_thread_lock.owns_lock())
@@ -193,6 +220,12 @@ void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
 JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCacheEntry* cache_entry,
                                                                    u32 address)
 {
+  if (PowerPC::breakpoints.IsAddressBreakPoint(address))
+  {
+    // reject blocks at breakpoints
+    return JitTieredGeneric::LookupBlock(cache_entry, address);
+  }
+
   std::unique_lock blockdb_lock(block_db_mutex);
 
   auto find_result = jit_block_db.find(address);
