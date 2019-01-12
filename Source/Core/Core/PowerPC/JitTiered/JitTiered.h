@@ -231,7 +231,6 @@ protected:
   void CPUDoReport(bool wait, bool hint);
   virtual void HandleOverrun(DispatchCacheEntry*) final;
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
-  bool HandleFault(uintptr_t access_address, SContext* ctx);
 
   bool BaselineIteration();
   void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,

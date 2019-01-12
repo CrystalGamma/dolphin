@@ -13,6 +13,7 @@ class JitTieredPPC64 : public JitTieredCommon
 public:
   JitTieredPPC64();
   virtual const char* GetName() const { return "TieredPPC64"; }
+  virtual bool HandleFault(uintptr_t access_address, SContext* ctx) override;
 
 protected:
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry* entry, u32 address);

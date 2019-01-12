@@ -263,27 +263,6 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCache
   }
 }
 
-bool JitTieredCommon::HandleFault(uintptr_t access_address, SContext* ctx)
-{
-  // FIXME: check if we are on the CPU thread
-  if (!cpu_thread_lock.owns_lock())
-  {
-    // no JIT code running
-    return false;
-  }
-  // we have a lock on disp_cache_mutex, so we can look up the fault handlers
-  auto find_result = fault_handlers.find(ctx->CTX_NPC);
-  if (find_result == fault_handlers.end())
-  {
-    ERROR_LOG(DYNA_REC,
-              "Segfault without handler accessing 0x%" PRIx64 " @ 0x%" PRIx64 ", crashing now",
-              uintptr_t(access_address), uintptr_t(ctx->CTX_NPC));
-    return false;
-  }
-  ctx->CTX_NPC = find_result->second;
-  return true;
-}
-
 void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
                                     std::vector<Bail>* bails,
                                     std::map<u32, ReportedBlock>* reported_blocks)
