@@ -126,13 +126,46 @@ void JitTieredCommon::Run()
       {
         // this case is super-rare: to create this scenario, the block would need to be executed
         // often enough to be JITted, but exit with an exception every time, but once it is compiled
-        // and discovered by the CPU thread, run without exception. It CAN be handled (look up the
-        // past instructions for the current basic block and extend it with new ones), but since it
-        // might not start at the address (and thus dispatch cache slot) that the JIT block started
-        // at, this is complicated. Leave it unimplemented until need has been discovered, in which
-        // case we will safely crash for now.
-        ERROR_LOG(DYNA_REC, "unimplemented: true JIT block overrun");
-        ASSERT(false);
+        // and discovered by the CPU thread, run without exception.
+        WARN_LOG(DYNA_REC, "true JIT overrun @ %08x", PC);
+        std::vector<DecodedInstruction> insts;
+        u32 address;
+        {
+          std::lock_guard<std::mutex> guard(block_db_mutex);
+          auto iter = jit_block_db.upper_bound(PC);
+          ASSERT(iter != jit_block_db.begin());
+          --iter;
+          address = iter->first;
+          ASSERT((PC - address) / 4 <= iter->second.instructions.size());
+          insts = iter->second.instructions;
+        }
+        // FIXME: do this better
+        u32 key = DispatchCacheKey(address);
+        DispatchCacheEntry& overrun_entry = dispatch_cache[key];
+        if (!overrun_entry.IsValid() || overrun_entry.address != address)
+        {
+          overrun_entry.address = address;
+          overrun_entry.executor = interpreter_executor;
+          ASSERT(!next_report.instructions.empty());
+          overrun_entry.offset = next_report.instructions.size();
+          overrun_entry.length = insts.size();
+          overrun_entry.bloom = BloomRange(address, address + 4 * insts.size());
+          overrun_entry.usecount = 0;
+          for (auto inst : insts)
+          {
+            next_report.instructions.push_back(inst);
+          }
+          next_report.instructions.push_back({});
+        }
+        u32 res = InterpretBlock(&next_report.instructions[(PC - address) / 4]);
+        if (res & BLOCK_OVERRUN)
+        {
+          jump_out = HandleOverrun(&overrun_entry);
+        }
+        else
+        {
+          jump_out = res & JUMP_OUT;
+        }
       }
     }
     if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
