@@ -428,10 +428,9 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   ADDI(scratch, scratch, -s16(jump.downcount));
   STW(scratch, ppcs, OFF_DOWNCOUNT);
   rc.PrepareReturn(this, 1);
-  LoadUnsignedImmediate(rc.GetReturnRegister(0),
-                        jump.flags & FASTMEM_BAIL ?
-                            (JitTieredGeneric::BLOCK_OVERRUN | JitTieredGeneric::REPORT_BAIL) :
-                            0);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), jump.flags & FASTMEM_BAIL ?
+                                                     JitTieredGeneric::REPORT_BAIL :
+                                                     JitTieredGeneric::JUMP_OUT);
   RestoreRegistersReturn(jump.reg_cache.saved_regs);
 }
 
