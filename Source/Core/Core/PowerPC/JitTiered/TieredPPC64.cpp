@@ -67,7 +67,7 @@ JitTieredPPC64::JitTieredPPC64()
   on_thread_baseline = false;
 }
 
-bool JitTieredCommon::HandleFault(uintptr_t access_address, SContext* ctx)
+bool JitTieredPPC64::HandleFault(uintptr_t access_address, SContext* ctx)
 {
   // FIXME: check if we are on the CPU thread
   if (!cpu_thread_lock.owns_lock())
@@ -92,20 +92,21 @@ int JitTieredPPC64::GetHostCode(u32* address, const u8** code, u32* code_size)
 {
   std::lock_guard<std::mutex> disp_lock(block_db_mutex);
   auto iter = jit_block_db.upper_bound(*address);
-  while (iter != jit_block_db.begin())
+  if (iter == jit_block_db.begin())
   {
-    --iter;
-    if (u64(iter->first) + 0x40000 < *address)
+    *code_size = 0;
+    return 2;
+  }
+  --iter;
+  if (*address - iter->first < iter->second.instructions.size() * 4)
+  {
+    // TODO: handle inlined BBs
+    if (!iter->second.entry_points.empty())
     {
-      // no block is longer than 1 << 16 instructions
-      *code_size = 0;
-      return 2;
-    }
-    if (iter->first + iter->second.instructions.size() > *address)
-    {
+      auto& jit_block = iter->second.entry_points.back();
       *address = iter->first;
-      *code = reinterpret_cast<const u8*>(iter->second.executor);
-      *code_size = iter->second.host_length;
+      *code = reinterpret_cast<const u8*>(jit_block.executor);
+      *code_size = jit_block.host_length;
       return 0;
     }
   }
@@ -139,10 +140,17 @@ void JitTieredPPC64::ReclaimCell(u32 cell)
 
   for (auto iter = jit_block_db.begin(); iter != jit_block_db.end(); ++iter)
   {
-    auto executor = iter->second.executor;
-    if (executor >= cell_start && executor < cell_end)
+    auto iter2 = iter->second.entry_points.begin();
+    while (iter2 != iter->second.entry_points.end())
     {
-      iter->second.executor = nullptr;
+      if (iter2->executor >= cell_start && iter2->executor < cell_end)
+      {
+        iter2 = iter->second.entry_points.erase(iter2);
+      }
+      else
+      {
+        ++iter2;
+      }
     }
   }
   lock.unlock();
@@ -165,50 +173,58 @@ void JitTieredPPC64::ReclaimCell(u32 cell)
   }
 }
 
-void JitTieredPPC64::BaselineCompile(u32 address, JitBlock&& block)
+void JitTieredPPC64::BaselineCompile(std::vector<u32> suggestions)
 {
-  PPC64BaselineCompiler compiler(routine_offsets);
-  std::vector<UGeckoInstruction> instructions;
-  for (const DecodedInstruction& inst : block.instructions)
+  for (auto job : PrepareBaselineSuggestions(suggestions))
   {
-    instructions.push_back(UGeckoInstruction(inst.inst));
-  }
-  compiler.Compile(address, instructions, block.bails);
-  const u32 len = compiler.instructions.size() * 4;
-  if (len > MAX_BLOCK_SIZE)
-  {
-    WARN_LOG(DYNA_REC, "Huge block (%u instructions) compiled. Refusing to emit.", len);
-    return;
-  }
-  if (len > CODESPACE_CELL_SIZE - offset_in_cell)
-  {
-    current_cell = (current_cell + 1) % CODESPACE_CELLS;
-    ReclaimCell(current_cell);
-    offset_in_cell = current_cell % ROUTINES_INTERVAL == 0 ? routine_offsets.end : 0;
-  }
-  current_offset = CODESPACE_CELL_SIZE * current_cell + offset_in_cell;
-  compiler.RelocateAll(current_offset);
+    PPC64BaselineCompiler compiler(routine_offsets);
+    std::vector<UGeckoInstruction> instructions;
+    for (const DecodedInstruction& inst : job.instructions)
+    {
+      instructions.push_back(UGeckoInstruction(inst.inst));
+    }
+    std::vector<Bail> bails;
+    auto iter = all_bails.lower_bound(Bail{job.address, 0});
+    while (iter != all_bails.end() && iter->guest_address < job.address + 4 * instructions.size())
+    {
+      bails.push_back(*iter);
+      ++iter;
+    }
+    compiler.Compile(job.address, instructions, bails);
+    const u32 len = compiler.instructions.size() * 4;
+    if (len > MAX_BLOCK_SIZE)
+    {
+      WARN_LOG(DYNA_REC, "Huge block (%u instructions) compiled. Refusing to emit.", len);
+      return;
+    }
+    if (len > CODESPACE_CELL_SIZE - offset_in_cell)
+    {
+      current_cell = (current_cell + 1) % CODESPACE_CELLS;
+      ReclaimCell(current_cell);
+      offset_in_cell = current_cell % ROUTINES_INTERVAL == 0 ? routine_offsets.end : 0;
+    }
+    current_offset = CODESPACE_CELL_SIZE * current_cell + offset_in_cell;
+    compiler.RelocateAll(current_offset);
 
-  for (auto pair : compiler.fault_handlers)
-  {
-    uintptr_t fault_address = uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.first));
-    uintptr_t handler_address =
-        uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.second));
-    block.fault_handlers.emplace_back(fault_address, handler_address);
+    CompiledBlock block{};
+    for (auto pair : compiler.fault_handlers)
+    {
+      uintptr_t fault_address = uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.first));
+      uintptr_t handler_address =
+          uintptr_t(codespace.GetPtrAtIndex(current_offset / 4 + pair.second));
+      block.fault_handlers.emplace_back(fault_address, handler_address);
+    }
+    codespace.SetOffset(current_offset / 4);
+    codespace.Emit(compiler.instructions);
+    block.offset = current_offset;
+    block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));
+    block.host_length = len;
+    block.guest_length = job.instructions.size();
+    block.bloom = BloomRange(job.address, job.address + block.guest_length);
+    block.additional_bbs = std::move(job.additional_bbs);
+    offset_in_cell += len;
+    INFO_LOG(DYNA_REC, "created executable code at 0x%016" PRIx64 " (offset %u, size %zu)",
+             u64(block.executor), current_offset, compiler.instructions.size());
+    AddJITBlock(job.address, std::move(block));
   }
-  codespace.SetOffset(current_offset / 4);
-  codespace.Emit(compiler.instructions);
-  block.offset = current_offset;
-  block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));
-  block.host_length = len;
-  offset_in_cell += len;
-  INFO_LOG(DYNA_REC, "created executable code at 0x%016" PRIx64 " (offset %u, size %zu)",
-           u64(block.executor), current_offset, compiler.instructions.size());
-  std::unique_lock lock(block_db_mutex);
-  auto find_result = jit_block_db.find(address);
-  if (find_result != jit_block_db.end())
-  {
-    jit_block_db.erase(find_result);
-  }
-  jit_block_db.emplace(address, block);
 }

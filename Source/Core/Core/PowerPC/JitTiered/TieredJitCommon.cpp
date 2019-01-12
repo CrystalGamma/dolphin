@@ -399,7 +399,13 @@ bool JitTieredCommon::BaselineIteration()
           }
         }
       }
+      auto bail = all_bails.lower_bound(Bail{inv.first, 0});
+      while (bail != all_bails.end() && bail->guest_address <= inv.last)
+      {
+        bail = all_bails.erase(bail);
+      }
     }
+    baseline_report.invalidation_bloom = BloomNone();
     baseline_report.invalidations.clear();
 
     for (auto report_block : baseline_report.blocks)
@@ -500,7 +506,10 @@ bool JitTieredCommon::BaselineIteration()
     }
   }
 
-  baseline_report.invalidation_bloom = BloomNone();
+  for (Bail bail : baseline_report.bails)
+  {
+    all_bails.insert(bail);
+  }
 
   BaselineCompile(baseline_suggestions);
 

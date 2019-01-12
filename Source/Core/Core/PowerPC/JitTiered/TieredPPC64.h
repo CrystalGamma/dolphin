@@ -17,7 +17,7 @@ public:
 
 protected:
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry* entry, u32 address);
-  virtual void BaselineCompile(u32 address, JitBlock&& block);
+  virtual void BaselineCompile(std::vector<u32> suggestions);
   virtual int GetHostCode(u32* address, const u8** code, u32* code_size) override;
 
 private:

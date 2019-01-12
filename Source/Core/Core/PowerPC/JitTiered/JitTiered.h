@@ -32,6 +32,11 @@ public:
   {
     u32 guest_address;
     u32 status;
+
+    bool operator<(const Bail& other) const
+    {
+      return std::tie(guest_address, status) < std::tie(other.guest_address, other.status);
+    }
   };
   struct DecodedInstruction
   {
@@ -288,6 +293,6 @@ protected:
   void* next_toc = nullptr;
 
   // === Baseline thread data ===
-  alignas(CACHELINE) std::map<u32, u32> block_counters;
+  std::set<Bail> all_bails;
   u32 current_offset = 0;
 };
