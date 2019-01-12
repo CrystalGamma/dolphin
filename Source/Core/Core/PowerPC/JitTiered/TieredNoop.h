@@ -10,5 +10,5 @@ class JitTieredNoop final : public JitTieredCommon
 {
 public:
   virtual const char* GetName() const { return "Tiered Noop"; }
-  virtual void BaselineCompile(u32 address, JitBlock&& block) {}
+  virtual void BaselineCompile(std::vector<u32> suggestions) override {}
 };

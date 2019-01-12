@@ -16,7 +16,7 @@ u32 JitTieredDummy::Executor(JitTieredGeneric* self, u32 offset, PowerPC::PowerP
   JitTieredDummy* xself = static_cast<JitTieredDummy*>(self);
   // INFO_LOG(DYNA_REC, "running @ %08x", block.address);
   const DecodedInstruction* inst = &xself->baseline_codespace[offset];
-  return InterpretBlock(inst) ? BLOCK_OVERRUN : 0;
+  return InterpretBlock(inst);
 }
 
 void JitTieredDummy::Init()
@@ -25,15 +25,8 @@ void JitTieredDummy::Init()
   on_thread_baseline = false;
 }
 
-void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
+void JitTieredDummy::ProvideSpace(u32 len)
 {
-  INFO_LOG(DYNA_REC, "'compiling' block @ %08x", address);
-  u32 len = block.instructions.size();
-  if (len >= CODESPACE_CELL_SIZE)
-  {
-    WARN_LOG(DYNA_REC, "Huge block (%u instructions) detected. Refusing to 'compile'.", len);
-    return;
-  }
   u32 current_cell = current_offset / CODESPACE_CELL_SIZE;
   u32 next_cell = ((current_offset + len + 1) / CODESPACE_CELL_SIZE) % CODESPACE_CELLS;
   if (current_cell != next_cell)
@@ -47,10 +40,18 @@ void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
     auto iter = jit_block_db.begin();
     for (; iter != jit_block_db.end(); ++iter)
     {
-      u32 block_offset = iter->second.offset;
-      if (block_offset >= current_offset && block_offset < current_offset + CODESPACE_CELL_SIZE)
+      auto iter2 = iter->second.entry_points.begin();
+      while (iter2 != iter->second.entry_points.end())
       {
-        iter->second.executor = nullptr;
+        u32 block_offset = iter2->offset;
+        if (block_offset >= current_offset && block_offset < current_offset + CODESPACE_CELL_SIZE)
+        {
+          iter2 = iter->second.entry_points.erase(iter2);
+        }
+        else
+        {
+          ++iter2;
+        }
       }
     }
 
@@ -69,19 +70,33 @@ void JitTieredDummy::BaselineCompile(u32 address, JitBlock&& block)
     }
     // at this point we can be sure that the CPU thread won't use the invalidated blocks anymore
   }
-  for (u32 i = 0; i < len; i += 1)
+}
+
+void JitTieredDummy::BaselineCompile(std::vector<u32> suggestions)
+{
+  for (auto job : PrepareBaselineSuggestions(suggestions))
   {
-    baseline_codespace[current_offset + i] = block.instructions[i];
+    u32 len = job.instructions.size();
+    INFO_LOG(DYNA_REC, "'compiling' block @ %08x (%u instructions)", job.address, len);
+    if (len >= CODESPACE_CELL_SIZE)
+    {
+      WARN_LOG(DYNA_REC, "Huge block (%u instructions) detected. Refusing to 'compile'.", len);
+      return;
+    }
+    ProvideSpace(len);
+    CompiledBlock block{};
+    block.executor = Executor;
+    block.offset = current_offset;
+    for (u32 i = 0; i < len; i += 1)
+    {
+      baseline_codespace[current_offset + i] = job.instructions[i];
+    }
+    baseline_codespace[current_offset + len] = {};
+    current_offset += len + 1;
+    block.guest_length = len;
+    block.host_length = sizeof(DecodedInstruction) * len;
+    block.bloom = BloomRange(job.address, job.address + len - 1);
+    block.additional_bbs = std::move(job.additional_bbs);
+    AddJITBlock(job.address, std::move(block));
   }
-  baseline_codespace[current_offset + len] = {};
-  std::unique_lock lock(block_db_mutex);
-  block.offset = current_offset;
-  block.executor = Executor;
-  auto find_result = jit_block_db.find(address);
-  if (find_result != jit_block_db.end())
-  {
-    jit_block_db.erase(find_result);
-  }
-  jit_block_db.emplace(address, block);
-  current_offset += len + 1;
 }

@@ -102,54 +102,70 @@ void JitTieredCommon::Run()
       }
     });
   }
+  CoreTiming::Advance();
   while (*state == CPU::State::Running)
   {
-    // advancing the time might block (e. g. on the GPU)
-    // or keep us busy for a while (copying data around),
-    // so try to report before doing so
-    CPUDoReport(false, next_report.instructions.size() >= (1 << 16));
-
-    CoreTiming::Advance();
-    PowerPC::CheckExternalExceptions();
-    if (!cpu_thread_lock.owns_lock())
+    const u32 start_addr = PC;
+    DispatchCacheEntry* cache_entry = FindBlock(start_addr);
+    const u32 usecount = cache_entry->usecount + 1;
+    cache_entry->usecount = usecount;
+    u32 flags = cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
+    if (flags & REPORT_BAIL)
     {
-      cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+      next_report.bails.push_back({PC, flags});
+      flags = HandleBail(PC);
     }
-
-    do
+    bool jump_out = flags & JUMP_OUT;
+    if (flags & BLOCK_OVERRUN)
     {
-      const u32 start_addr = PC;
-      DispatchCacheEntry* cache_entry = FindBlock(start_addr);
-      const u32 usecount = cache_entry->usecount + 1;
-      cache_entry->usecount = usecount;
-      const u32 flags =
-          cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
-      if (flags & BLOCK_OVERRUN)
+      if (cache_entry->executor == interpreter_executor)
       {
-        if (flags & REPORT_BAIL)
-        {
-          next_report.bails.push_back({PC, flags});
-        }
-        HandleOverrun(cache_entry);
+        jump_out = HandleOverrun(cache_entry);
       }
-      if (flags & REPORT_BAIL)
+      else
       {
-        next_report.bails.push_back({PC, flags});
+        // this case is super-rare: to create this scenario, the block would need to be executed
+        // often enough to be JITted, but exit with an exception every time, but once it is compiled
+        // and discovered by the CPU thread, run without exception. It CAN be handled (look up the
+        // past instructions for the current basic block and extend it with new ones), but since it
+        // might not start at the address (and thus dispatch cache slot) that the JIT block started
+        // at, this is complicated. Leave it unimplemented until need has been discovered, in which
+        // case we will safely crash for now.
+        ERROR_LOG(DYNA_REC, "unimplemented: true JIT block overrun");
+        ASSERT(false);
       }
-      if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
-          flags & (REPORT_IMMEDIATELY | REPORT_BAIL))
+    }
+    if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
+        flags & (REPORT_IMMEDIATELY | REPORT_BAIL))
+    {
+      CPUDoReport(flags & REPORT_IMMEDIATELY, flags & REPORT_BAIL);
+      if (!cpu_thread_lock.owns_lock())
       {
-        CPUDoReport(flags & REPORT_IMMEDIATELY, flags & REPORT_BAIL);
+        cpu_thread_lock = std::unique_lock(disp_cache_mutex);
+      }
+    }
+    if (jump_out)
+    {
+      if (PowerPC::ppcState.Exceptions)
+      {
+        PowerPC::CheckExceptions();
+      }
+      if (PowerPC::ppcState.downcount <= 0)
+      {
+        // advancing the time might block (e. g. on the GPU)
+        // or keep us busy for a while (copying data around),
+        // so try to report before doing so
+        CPUDoReport(false, next_report.instructions.size() >= (1 << 16));
+
+        CoreTiming::Advance();
+        PowerPC::CheckExternalExceptions();
+
         if (!cpu_thread_lock.owns_lock())
         {
           cpu_thread_lock = std::unique_lock(disp_cache_mutex);
         }
       }
-      if (PowerPC::ppcState.Exceptions)
-      {
-        PowerPC::CheckExceptions();
-      }
-    } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
+    }
   }
   if (cpu_thread_lock.owns_lock())
   {
@@ -170,51 +186,27 @@ void JitTieredCommon::Run()
   }
 }
 
-void JitTieredCommon::HandleOverrun(DispatchCacheEntry* cache_entry)
+u32 JitTieredCommon::HandleBail(u32 start_addr)
 {
-  const u32 start_addr = cache_entry->address;
-
-  u32 offset = next_report.instructions.size();
-  u32 len = 0;
-  if (cache_entry->executor != interpreter_executor)
+  std::vector<DecodedInstruction> buf;
+  buf.push_back({});
   {
-    INFO_LOG(DYNA_REC, "JIT block overrun @ %08x", start_addr);
-    next_report.invalidation_bloom |= BloomCacheline(start_addr);
+    std::lock_guard lock(block_db_mutex);
+    // look up the basic block we're in
+    auto iter = jit_block_db.upper_bound(start_addr);
+    // bails should leave us in the middle of a known block
+    ASSERT(iter != jit_block_db.begin());
+    --iter;
+    const std::vector<DecodedInstruction>& instructions = iter->second.instructions;
+    u32 start = (PC - iter->first) / 4;
+    ASSERT(start < instructions.size());
+    for (u32 i = start; i < instructions.size(); ++i)
     {
-      std::lock_guard lock(block_db_mutex);
-      // we're on the CPU thread and know the block hasn't been invalidated, so no need to deal with
-      // bloom filters
-      auto find_result = jit_block_db.find(start_addr);
-      // Baseline must not erase the entry while it is in dispatch cache
-      ASSERT(find_result != jit_block_db.end());
-      const std::vector<DecodedInstruction>& instructions = find_result->second.instructions;
-      len = instructions.size();
-      for (const DecodedInstruction& inst : instructions)
-      {
-        next_report.instructions.push_back(inst);
-      }
-      next_report.instructions.push_back({});
+      buf.push_back(instructions[i]);
     }
-
-    // address is already correct
-    cache_entry->offset = offset;
-    cache_entry->length = len;
-    cache_entry->executor = interpreter_executor;
-    // bloom is already correct
-    // leave usecount untouched
-
-    // JIT bails may leave us in the middle of a block
-    if (PC < start_addr + len * 4)
-    {
-      ASSERT(PC >= start_addr);
-      if (!InterpretBlock(&next_report.instructions[offset + (PC - start_addr) / 4]))
-      {
-        return;
-      }
-    }
-    ASSERT(PC == start_addr + len * 4);
   }
-  JitTieredGeneric::HandleOverrun(cache_entry);
+  buf.push_back({});
+  return InterpretBlock(&buf[0]);
 }
 
 JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCacheEntry* cache_entry,
@@ -229,169 +221,142 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCache
   std::unique_lock blockdb_lock(block_db_mutex);
 
   auto find_result = jit_block_db.find(address);
-  Bloom bloom = next_report.invalidation_bloom | old_bloom;
-  if (find_result == jit_block_db.end() || find_result->second.executor == nullptr ||
-      (find_result->second.bloom & bloom))
+  if (find_result == jit_block_db.end())
   {
     blockdb_lock.unlock();
 
     return JitTieredGeneric::LookupBlock(cache_entry, address);
   }
-  else
-  {
-    JitBlock& block = find_result->second;
-    DispatchCacheEntry entry;
-    entry.address = address;
-    entry.offset = block.offset;
-    entry.bloom = block.bloom;
-    entry.executor = block.executor;
-    entry.length = block.instructions.size();
-    entry.usecount = 0;
 
-    for (auto& handler : block.fault_handlers)
+  DispatchCacheEntry entry{};
+  entry.address = address;
+  entry.usecount = 0;
+
+  Bloom bloom = next_report.invalidation_bloom | old_bloom;
+  const CompiledBlock* jit_block = nullptr;
+  for (const CompiledBlock& block : find_result->second.entry_points)
+  {
+    bool contains_breakpoint = false;
+    for (u32 bb_addr : block.additional_bbs)
+    {
+      if (PowerPC::breakpoints.IsAddressBreakPoint(bb_addr))
+      {
+        WARN_LOG(DYNA_REC, "rejecting block @ %08x (breakpoint @ %08x)", address, bb_addr);
+        contains_breakpoint = true;
+        break;
+      }
+    }
+    if (!contains_breakpoint && !(block.bloom & bloom))
+    {
+      jit_block = &block;
+      break;
+    }
+    WARN_LOG(DYNA_REC, "rejecting block @ %08x", address);
+  }
+  if (jit_block != nullptr)
+  {
+    // found a JIT block that is not matched by our invalidation bloom filter nor contains
+    // breakpoints
+    entry.executor = jit_block->executor;
+    entry.bloom = jit_block->bloom;
+    entry.offset = jit_block->offset;
+    entry.length = jit_block->guest_length;
+    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x, length %u)", address, entry.offset,
+             entry.length);
+
+    for (auto& handler : jit_block->fault_handlers)
     {
       INFO_LOG(DYNA_REC, "installing fault handler: 0x%" PRIxPTR " ↦ 0x%" PRIxPTR, handler.first,
                handler.second);
       fault_handlers.insert(handler);
     }
-
-    blockdb_lock.unlock();
-    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x)", address, entry.offset);
-
-    *cache_entry = entry;
-    return cache_entry;
   }
+  else
+  {
+    // we can still use the instructions in the code model to build an interpreter block
+    // (note that we won't miss breakpoints this way, because those would end the basic block)
+    entry.executor = interpreter_executor;
+    entry.length = find_result->second.instructions.size();
+    entry.bloom = BloomRange(address, address + entry.length - 1);
+
+    if (next_report.instructions.empty())
+    {
+      next_report.instructions.push_back({});
+    }
+    entry.offset = next_report.instructions.size();
+    for (const DecodedInstruction& inst : find_result->second.instructions)
+    {
+      next_report.instructions.push_back(inst);
+    }
+    next_report.instructions.push_back({});
+    INFO_LOG(DYNA_REC, "found block @ %08x (offset %x, length %u)", address, entry.offset,
+             entry.length);
+  }
+
+  blockdb_lock.unlock();
+
+  *cache_entry = entry;
+  return cache_entry;
 }
 
-void JitTieredCommon::UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
-                                    std::vector<Bail>* bails,
-                                    std::map<u32, ReportedBlock>* reported_blocks)
+std::vector<JitTieredCommon::BaselineCompileJob>
+JitTieredCommon::PrepareBaselineSuggestions(std::vector<u32> suggestions)
 {
-  std::sort(invalidations->begin(), invalidations->end(),
-            [](const Invalidation& a, const Invalidation& b) {
-              return std::tie(a.first, a.last) < std::tie(b.first, b.last);
-            });
-  std::sort(bails->begin(), bails->end(), [](const Bail& a, const Bail& b) {
-    return std::tie(a.guest_address, a.status) < std::tie(b.guest_address, b.status);
-  });
-  std::unique_lock guard(block_db_mutex);
-  size_t num_inv = invalidations->size();
-  size_t inv_start = 0;
-  size_t num_bails = bails->size();
-  size_t bail_start = 0;
-  auto iter = jit_block_db.begin();
-  // this loop should run in O(num_inv + num_bails + #blocks * log(#reported_blocks) * (size of
-  // biggest intersecting cluster of invalidations)^2) time if this turns out to be too slow, we may
-  // need to find a container more suitable to finding intersecting ranges
-  while (iter != jit_block_db.end())
+  std::sort(suggestions.begin(), suggestions.end());
+
+  std::vector<BaselineCompileJob> jobs;
+
+  // the Baseline thread can do unsynchronized reads on the code model
+  const std::map<u32, BasicBlock>& code_model = jit_block_db;
+  u32 pos = 0;
+  while (pos < suggestions.size())
   {
-    const u32 addr = iter->first;
-    JitBlock& block = iter->second;
-    if (block.executor == nullptr)
+    const u32 address = suggestions[pos];
+    std::vector<DecodedInstruction> buf;
+    std::vector<u32> additional_bbs;
+    // pull in all the code until the next unconditional jump / context synchronizing instruction
+    do
     {
-      // clean up blocks that were invalidated last cycle but not recompiled
-      iter = jit_block_db.erase(iter);
-      continue;
-    }
-    const u32 jit_len = block.instructions.size();
-    const bool bloom_hit = block.bloom & baseline_report.invalidation_bloom;
-    while (inv_start < num_inv && invalidations->at(inv_start).last < addr)
-    {
-      // this and all previous blocks only affect lower addresses
-      inv_start += 1;
-    }
-    while (bail_start < num_bails && bails->at(bail_start).guest_address < addr)
-    {
-      // this and all previous blocks only affect lower addresses
-      bail_start += 1;
-    }
-    auto reported_block = reported_blocks->find(addr);
-    u32 reported_len = 0;
-    if (reported_block != reported_blocks->end())
-    {
-      reported_len = reported_block->second.len;
-      if (reported_len == 0)
+      const u32 this_bb = address + 4 * buf.size();
+      if (pos < suggestions.size() && suggestions[pos] == this_bb)
       {
-        // blocks with zero length are considered optimized blocks, so make sure we don't try to
-        // compile a zero-length block
-        reported_block->second.usecount += block.runcount;
-        reported_blocks->erase(reported_block);
+        // skip this suggestion, since we're already building it into our block. if it turns out
+        // this block is entered from a different block, it will come up again eventually
+        ++pos;
       }
-    }
-    bool invalidated = false, bailed = false;
-    if (jit_len != 0)
-    {
-      for (size_t i = bail_start; i < num_bails; ++i)
+      auto iter = code_model.find(this_bb);
+      if (iter == code_model.cend())
       {
-        const Bail& bail = bails->at(i);
-        if (bail.guest_address >= addr + jit_len * 4)
-        {
-          // this and all following are at higher addresses
-          break;
-        }
-        bailed = true;
-        block.bails.push_back(bail);
+        break;
       }
-      if (reported_len > jit_len)
+      if (!buf.empty())
       {
-        // Baseline block overrun
-        invalidated = true;
+        additional_bbs.push_back(this_bb);
       }
-      else if (bloom_hit)
+      for (auto inst : iter->second.instructions)
       {
-        for (size_t i = inv_start; i < num_inv; i += 1)
-        {
-          const Invalidation& inv = invalidations->at(i);
-          if (inv.first >= addr + jit_len * 4)
-          {
-            // this and all following invalidations affect only higher addresses
-            break;
-          }
-          if (inv.last >= addr)
-          {
-            invalidated = true;
-            break;
-          }
-        }
+        buf.push_back(inst);
       }
-    }
-    else if (bloom_hit)
-    {
-      // figure out how to check optimized blocks for invalidation and bails when implementing
-      // optimized JIT
-      invalidated = true;
-      break;
-    }
-    if (invalidated || bailed)
-    {
-      if (reported_len != 0)
-      {
-        INFO_LOG(DYNA_REC, "recompile Baseline block @ %08x", addr);
-        reported_block->second.usecount += block.runcount;
-        std::sort(block.bails.begin(), block.bails.end(), [](const Bail& a, const Bail& b) {
-          return std::tie(a.guest_address, a.status) < std::tie(b.guest_address, b.status);
-        });
-        reported_block->second.bails.swap(block.bails);
-      }
-      else
-      {
-        INFO_LOG(DYNA_REC, "invalidate JIT block @ %08x (used %" PRIu64 " times)", addr,
-                 block.runcount);
-        block_counters.emplace(addr, block.runcount);
-      }
-      if (invalidated)
-      {
-        block.executor = nullptr;
-      }
-    }
-    else
-    {
-      block.runcount += reported_block->second.usecount;
-    }
-    ++iter;
+      // assume we have to go to dispatcher if the BB didn't end in a conditional branch
+    } while (buf.back().inst.OPCD != 16);
+    jobs.push_back({address, std::move(buf), std::move(additional_bbs)});
   }
-  invalidations->clear();
-  bails->clear();
+  return std::move(jobs);
+}
+
+void JitTieredCommon::AddJITBlock(u32 address, CompiledBlock block)
+{
+  std::lock_guard<std::mutex> lock(block_db_mutex);
+  for (u32 addr : block.additional_bbs)
+  {
+    auto iter = jit_block_db.find(addr);
+    ASSERT(iter != jit_block_db.end());
+    iter->second.inlined_in.push_back(address);
+    iter->second.runcount = 0;
+  }
+  auto iter = jit_block_db.find(address);
+  ASSERT(iter != jit_block_db.end());
+  iter->second.entry_points.push_back(std::move(block));
 }
 
 bool JitTieredCommon::BaselineIteration()
@@ -409,65 +374,135 @@ bool JitTieredCommon::BaselineIteration()
   }
 
   INFO_LOG(DYNA_REC, "reading report");
-
-  std::map<u32, ReportedBlock> reported_blocks;
-  for (const DispatchCacheEntry& block : baseline_report.blocks)
+  std::vector<u32> baseline_suggestions;
   {
-    const ReportedBlock rb = {
-        block.offset, block.executor == interpreter_executor ? block.length : 0, block.usecount};
-    reported_blocks.emplace(block.address, rb);
-  }
-  baseline_report.blocks.clear();
+    std::lock_guard guard(block_db_mutex);
+    for (auto inv : baseline_report.invalidations)
+    {
+      auto iter = jit_block_db.upper_bound(inv.last);
+      while (iter != jit_block_db.begin())
+      {
+        --iter;
+        if (iter->first + iter->second.instructions.size() <= inv.first)
+        {
+          break;
+        }
+        std::vector<u32> inlined_in{};
+        iter->second.inlined_in.swap(inlined_in);
+        iter = jit_block_db.erase(iter);
+        for (u32 additional_bb : inlined_in)
+        {
+          auto iter2 = jit_block_db.find(additional_bb);
+          if (iter2 != jit_block_db.end())
+          {
+            iter2->second.entry_points.clear();
+          }
+        }
+      }
+    }
+    baseline_report.invalidations.clear();
 
-  UpdateBlockDB(baseline_report.invalidation_bloom, &baseline_report.invalidations,
-                &baseline_report.bails, &reported_blocks);
+    for (auto report_block : baseline_report.blocks)
+    {
+      if (report_block.executor != interpreter_executor || report_block.length == 0)
+      {
+        continue;
+      }
+      auto iter = jit_block_db.upper_bound(report_block.address);
+      u32 max_length = MAX_BLOCK_LENGTH;
+      if (iter == jit_block_db.end())
+      {
+        // no block after this ⇒ limit to end of address space
+        const u32 available_space = (0xfffffffc - report_block.address) / 4 + 1;
+        if (max_length > available_space)
+        {
+          max_length = available_space;
+        }
+      }
+      else
+      {
+        // limit to beginning of next basic block
+        const u32 available_space = (iter->first - report_block.address) / 4;
+        if (max_length > available_space)
+        {
+          max_length = available_space;
+        }
+      }
+      if (iter != jit_block_db.begin())
+      {
+        auto insert_pos = iter;
+        --iter;
+        // since we now the basic block after this is the first at higher address than the new
+        // block, this never underflows
+        u32 split_pos = (report_block.address - iter->first) / 4;
+        BasicBlock& old_block = iter->second;
+        if (split_pos >= old_block.instructions.size())
+        {
+          // completely new block
+          iter = jit_block_db.emplace_hint(insert_pos, report_block.address,
+                                           BasicBlock{{}, 0, {}, {}});
+        }
+        else if (split_pos > 0)
+        {
+          // split block: save old instructions in case the old one exited early (e. g. exceptions)
+          std::vector<DecodedInstruction> old_instructions;
+          for (u32 i = split_pos; i < old_block.instructions.size(); ++i)
+          {
+            old_instructions.push_back(old_block.instructions.at(i));
+          }
+          // truncate old block
+          while (old_block.instructions.size() > split_pos)
+          {
+            old_block.instructions.pop_back();
+          }
+          // assume (conservatively) that these instructions are used in the same JIT blocks as the
+          // ones before the split
+          std::vector<u32> inlined_in = old_block.inlined_in;
+          inlined_in.push_back(iter->first);
+
+          u64 runcount = old_block.runcount;
+          iter = jit_block_db.emplace_hint(
+              insert_pos, report_block.address,
+              BasicBlock{std::move(old_instructions), runcount, {}, std::move(inlined_in)});
+        }
+      }
+      else
+      {
+        // new block at lowest observed address
+        iter = jit_block_db.emplace_hint(iter, report_block.address, BasicBlock{{}, 0, {}, {}});
+      }
+      ASSERT(iter->first == report_block.address);
+      iter->second.runcount += report_block.usecount;
+      std::vector<DecodedInstruction>& insts = iter->second.instructions;
+      u32 length = max_length;
+      if (report_block.length < length)
+      {
+        length = report_block.length;
+      }
+      if (insts.size() < length)
+      {
+        // new instructions (overrun): just copy everything, maybe we even get new instrumentation
+        // data
+        INFO_LOG(DYNA_REC, "recording %u instructions @ %08x, was %zu", length,
+                 report_block.address, insts.size());
+        insts.clear();
+        for (u32 i = report_block.offset; i < report_block.offset + length; ++i)
+        {
+          insts.push_back(baseline_report.instructions.at(i));
+        }
+        // invalidate JIT blocks
+        iter->second.entry_points.clear();
+      }
+      if (iter->second.runcount > BASELINE_THRESHOLD)
+      {
+        baseline_suggestions.push_back(report_block.address);
+      }
+    }
+  }
+
   baseline_report.invalidation_bloom = BloomNone();
 
-  for (auto pair : reported_blocks)
-  {
-    const u32 address = pair.first;
-    const ReportedBlock& block = pair.second;
-    u64 runcount = block.usecount;
-    auto counter = block_counters.find(address);
-    if (counter != block_counters.end())
-    {
-      runcount += counter->second;
-      if (runcount < BASELINE_THRESHOLD)
-      {
-        counter->second = runcount;
-        continue;
-      }
-      block_counters.erase(counter);
-    }
-    else
-    {
-      if (runcount < BASELINE_THRESHOLD)
-      {
-        block_counters.insert(std::make_pair(address, runcount));
-        continue;
-      }
-    }
-    if (block.len == 0)
-    {
-      // entries with length 0 in the block are considered 'optimized' blocks
-      // and trying to compile an empty block doesn't make sense anyway
-      continue;
-    }
-    std::vector<DecodedInstruction> insts;
-    for (u32 i = 0; i < block.len; i += 1)
-    {
-      insts.push_back(baseline_report.instructions[block.start + i]);
-    }
-    JitBlock jb = {BloomRange(address, address + 4 * block.len - 1),
-                   nullptr,
-                   runcount,
-                   current_offset,
-                   std::move(insts),
-                   std::move(block.bails),
-                   {},
-                   0};
-    BaselineCompile(address, std::move(jb));
-  }
+  BaselineCompile(baseline_suggestions);
 
   // the mutex on the report drops here, so next time the CPU thread reports,
   // it will drop the interpreter blocks whose instructions we just received,

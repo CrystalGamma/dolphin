@@ -24,13 +24,32 @@ public:
   enum ExecutorFlags : u32
   {
     BLOCK_OVERRUN = 1,
-    REPORT_IMMEDIATELY = 2,
+    JUMP_OUT = 2,
     REPORT_BAIL = 4,
+    REPORT_IMMEDIATELY = 8,
   };
   struct Bail
   {
     u32 guest_address;
     u32 status;
+  };
+  struct DecodedInstruction
+  {
+    void (*func)(UGeckoInstruction);
+    UGeckoInstruction inst;
+    /// prefix sum of estimated cycles from start of block
+    u16 cycles;
+    /// see Instructionflags
+    u16 flags;
+  };
+  enum InstructionFlags : u16
+  {
+    // this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
+    // functions themselves)
+    USES_FPU = 1,
+    // this instruction has been known to access addresses that are not optimizable RAM addresses
+    // currently checked for D-form load/stores on first execution
+    NEEDS_SLOWMEM = 2,
   };
 
   virtual const char* GetName() const { return "TieredGeneric"; }
@@ -67,7 +86,6 @@ protected:
   using Bloom = u64;
   using Executor = u32 (*)(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
                            void* toc);
-  using InterpreterFunc = void (*)(UGeckoInstruction);
 
   struct DispatchCacheEntry
   {
@@ -83,25 +101,6 @@ protected:
   };
   static_assert(sizeof(DispatchCacheEntry) <= 32, "Dispatch cache entry should fit in 32 bytes");
 
-  enum InstructionFlags : u16
-  {
-    // this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
-    // functions themselves)
-    USES_FPU = 1,
-    // this instruction has been known to access addresses that are not optimizable RAM addresses
-    // currently checked for D-form load/stores on first execution
-    NEEDS_SLOWMEM = 2,
-  };
-
-  struct DecodedInstruction
-  {
-    InterpreterFunc func;
-    UGeckoInstruction inst;
-    /// prefix sum of estimated cycles from start of block
-    u16 cycles;
-    /// see Instructionflags
-    u16 flags;
-  };
   static_assert(sizeof(DecodedInstruction) <= 16, "Decoded instruction should fit in 16 bytes");
 
   struct Invalidation
@@ -151,18 +150,20 @@ protected:
   static u32 InterpreterExecutor(JitTieredGeneric* self, u32 offset,
                                  PowerPC::PowerPCState* ppcState, void* toc)
   {
-    return InterpretBlock(&self->next_report.instructions[offset]) ? BLOCK_OVERRUN : 0;
+    return InterpretBlock(&self->next_report.instructions[offset]);
   }
 
   void CompactInterpreterBlocks(BaselineReport* report, bool keep_old_blocks);
-  static bool InterpretBlock(const DecodedInstruction* instructions);
-  virtual void HandleOverrun(DispatchCacheEntry* entry);
+  static u32 InterpretBlock(const DecodedInstruction* instructions);
+  bool HandleOverrun(DispatchCacheEntry* entry);
   void RunZeroInstruction();
 
   DispatchCacheEntry* FindBlock(u32 address);
   /// tail-called by FindBlock if it doesn't find a block in the dispatch cache.
   /// the default implementation just creates a new interpreter block.
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry* entry, u32 address);
+
+  static constexpr size_t MAX_BLOCK_LENGTH = 1024;
 
   static constexpr int DISP_CACHE_SHIFT = 9;
   static constexpr size_t DISP_PRIMARY_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
@@ -200,42 +201,51 @@ protected:
 class JitTieredCommon : public JitTieredGeneric
 {
 public:
+  struct BaselineCompileJob
+  {
+    u32 address;
+    std::vector<DecodedInstruction> instructions;
+    std::vector<u32> additional_bbs;
+  };
   JitTieredCommon() { interpreter_executor = CheckBPAndInterpret; }
   virtual void Run() final;
 
 protected:
-  struct JitBlock
+  struct CompiledBlock
   {
-    Bloom bloom;
     Executor executor;
-    u64 runcount;
+    Bloom bloom;
+    u32 guest_length;
     u32 offset;
-    std::vector<DecodedInstruction> instructions;
-    /// this should be sorted.
-    std::vector<Bail> bails;
     /// pair contains (fault address, handler address)
     std::vector<std::pair<uintptr_t, uintptr_t>> fault_handlers;
+    // this exists mainly so the CPU thread can check if this JIT block contains breakpoints.
+    // note that it need not be updated in case of a block split since setting a breakpoint would
+    // invalidate the basic block anyway, removing this JIT block via inlined_in and if the
+    // breakpoint existed before, it will not let a contiguous block be created in the first place
+    std::vector<u32> additional_bbs;
     u32 host_length;
   };
-  struct ReportedBlock
+  struct BasicBlock
   {
-    u32 start;
-    u32 len;
-    u64 usecount;
-    std::vector<Bail> bails;
+    std::vector<DecodedInstruction> instructions;
+    u64 runcount;
+    std::vector<CompiledBlock> entry_points;
+    /// list of basic blocks with JIT entry points that inline this code
+    std::vector<u32> inlined_in;
   };
 
   static u32 CheckBPAndInterpret(JitTieredGeneric* self, u32 offset,
                                  PowerPC::PowerPCState* ppcState, void* toc);
 
   void CPUDoReport(bool wait, bool hint);
-  virtual void HandleOverrun(DispatchCacheEntry*) final;
+  u32 HandleBail(u32 address);
   virtual DispatchCacheEntry* LookupBlock(DispatchCacheEntry*, u32 address) override;
 
   bool BaselineIteration();
-  void UpdateBlockDB(Bloom bloom, std::vector<Invalidation>* invalidations,
-                     std::vector<Bail>* bails, std::map<u32, ReportedBlock>* reported_blocks);
-  virtual void BaselineCompile(u32 address, JitBlock&& block) = 0;
+  virtual void BaselineCompile(std::vector<u32> suggestions) = 0;
+  std::vector<BaselineCompileJob> PrepareBaselineSuggestions(std::vector<u32> suggestions);
+  void AddJITBlock(u32 address, CompiledBlock block);
 
   static constexpr u32 BASELINE_THRESHOLD = 16;
   static constexpr u32 REPORT_THRESHOLD = 128;
@@ -267,7 +277,7 @@ protected:
 
   // === Block DB ===
   alignas(CACHELINE) std::mutex block_db_mutex;
-  std::map<u32, JitBlock> jit_block_db;
+  std::map<u32, BasicBlock> jit_block_db;
 
   // === Baseline report ===
   alignas(CACHELINE) std::mutex report_mutex;

@@ -200,27 +200,28 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredGeneric::LookupBlock(DispatchCach
   entry->executor = interpreter_executor;
   entry->bloom = BloomCacheline(address);
   valid_block.Set(address >> 5);
-  entry->length = 0;
-  entry->usecount = 1;
+  entry->length = entry->usecount = 0;
   return entry;
 }
 
 bool JitTieredGeneric::IsRedispatchInstruction(const UGeckoInstruction inst)
 {
   const GekkoOPInfo* info = PPCTables::GetOpInfo(inst);
-  return inst.OPCD == 9                               // sc
-         || (inst.OPCD == 31 && inst.SUBOP10 == 146)  // mtmsr
-         || (info->flags & FL_CHECKEXCEPTIONS)        // rfi
-         || (info->type == OpType::InstructionCache)  // isync
+  return (info->flags & FL_ENDBLOCK) || (info->type == OpType::InstructionCache)  // isync
       ;
 }
 
-bool JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
+u32 JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
 {
   for (; instructions->func; ++instructions)
   {
     auto& inst = *instructions;
+    // we've already fetched the instruction, so no ISI possible
     NPC = PC + 4;
+    // decrementing before executing the instruction (at least logically, in the case of JIT code)
+    // is the only way to be deterministic without tracking where the block began and the
+    // instructions since then (difficult/slow in the JIT case)
+    PowerPC::ppcState.downcount -= inst.cycles;
     if ((inst.flags & USES_FPU) && !MSR.FP)
     {
       PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
@@ -231,82 +232,70 @@ bool JitTieredGeneric::InterpretBlock(const DecodedInstruction* instructions)
     }
     if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
-      PowerPC::ppcState.downcount -= inst.cycles;
-      return false;
+      return JUMP_OUT;
     }
     if (NPC != PC + 4)
     {
-      PowerPC::ppcState.downcount -= inst.cycles;
       PC = NPC;
-      return false;
+      return JUMP_OUT;
     }
     PC = NPC;
   }
   if ((instructions - 1)->func)
   {
     const DecodedInstruction& last = *(instructions - 1);
-    PowerPC::ppcState.downcount -= last.cycles;
     if (IsRedispatchInstruction(last.inst))
     {
-      // even if the block didn't end here, we have to go back to dispatcher
-      // because of e. g. invalidation or breakpoints
-      return false;
+      // block ended, but fall through to next instruction ⇒ no downcount/exception check nor
+      // overrun
+      return 0;
     }
   }
-  return true;
+  // this should only be reached if the previous instruction caused an exception every time it was
+  // executed before, or the block is empty
+  return BLOCK_OVERRUN;
 }
 
-void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
+bool JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
 {
   const u32 len = cache_entry->length;
+  if (len == MAX_BLOCK_LENGTH)
+  {
+    return false;
+  }
   const u32 offset = cache_entry->offset;
   if (offset + len + 1 != next_report.instructions.size())
   {
-    // add sentinel instruction (so InterpretBlock can detect the end of the previous block)
-    next_report.instructions.push_back({});
     // we can only append to the last block, so copy this one to the end
     cache_entry->offset = static_cast<u32>(next_report.instructions.size());
-    for (u32 pos = offset; pos < offset + len + 1; pos += 1)
+    for (u32 pos = offset; pos < offset + len + 1; ++pos)
     {
       next_report.instructions.push_back(next_report.instructions[pos]);
     }
   }
-  u16 cycles_total = 0;
-  if (len > 0)
-  {
-    cycles_total = next_report.instructions[next_report.instructions.size() - 2].cycles;
-  }
 
-  u16 cycles_new = 0;
-  do
+  while (true)
   {
     // if length is 0, it means we are resuming after the breakpoint
     if (PowerPC::breakpoints.IsAddressBreakPoint(PC) && cache_entry->length != 0)
     {
       INFO_LOG(DYNA_REC, "%8x: breakpoint", PC);
-      break;
+      return false;
     }
     const UGeckoInstruction inst(PowerPC::Read_Opcode(PC));
     if (inst.hex == 0)
     {
       PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
-      PowerPC::ppcState.downcount -= cycles_new;
-      return;
+      return true;
     }
+
     u16 inst_cycles = PPCTables::GetOpInfo(inst)->numCycles;
-    if (inst_cycles > 0xffff - cycles_total)
-    {
-      // prevent timing overflow by ending the (very large) block early (deterministically!)
-      break;
-    }
-    cycles_new += inst_cycles;
-    cycles_total += inst_cycles;
-    const InterpreterFunc func = PPCTables::GetInterpreterOp(inst);
+    const auto func = PPCTables::GetInterpreterOp(inst);
     const bool uses_fpu = PPCTables::UsesFPU(inst);
     DecodedInstruction dec_inst;
     dec_inst.func = func;
     dec_inst.inst = inst;
-    dec_inst.cycles = cycles_total;
+    dec_inst.cycles = inst_cycles;
     dec_inst.flags = uses_fpu ? USES_FPU : 0;
     cache_entry->length += 1;
     if ((PC & 31) == 0)
@@ -314,7 +303,10 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
       cache_entry->bloom |= BloomCacheline(PC);
       valid_block.Set(PC >> 5);
     }
+
     NPC = PC + 4;
+    PowerPC::ppcState.downcount -= inst_cycles;
+
     if (uses_fpu && !MSR.FP)
     {
       PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
@@ -341,17 +333,15 @@ void JitTieredGeneric::HandleOverrun(DispatchCacheEntry* cache_entry)
     next_report.instructions.push_back({});
     if (PowerPC::ppcState.Exceptions & EXCEPTION_SYNC)
     {
-      PowerPC::ppcState.downcount -= cycles_new;
-      return;
+      return true;
     }
-    PC += 4;
-    if (IsRedispatchInstruction(inst))
+    bool jump = NPC != PC + 4;
+    PC = NPC;
+    if (jump || IsRedispatchInstruction(inst) || cache_entry->length == MAX_BLOCK_LENGTH)
     {
-      break;
+      return jump;
     }
-  } while (PC == NPC);
-  PowerPC::ppcState.downcount -= cycles_new;
-  PC = NPC;
+  }
 }
 
 void JitTieredGeneric::SingleStep()
@@ -361,11 +351,16 @@ void JitTieredGeneric::SingleStep()
   DispatchCacheEntry* entry = FindBlock(PC);
   entry->usecount += 1;
   u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
+  bool jump_out = flags & JUMP_OUT;
   if (flags & BLOCK_OVERRUN)
   {
-    HandleOverrun(entry);
+    jump_out = HandleOverrun(entry);
   }
-  PowerPC::CheckExceptions();
+  if (jump_out)
+  {
+    PowerPC::CheckExceptions();
+    // we end after this block anyway, so no downcount check needed
+  }
   PowerPC::CheckBreakPoints();
 }
 
@@ -373,28 +368,37 @@ void JitTieredGeneric::Run()
 {
   const CPU::State* state = CPU::GetStatePtr();
   BaselineReport last_report;
+  CoreTiming::Advance();
   while (*state == CPU::State::Running)
   {
-    CoreTiming::Advance();
-    PowerPC::CheckExternalExceptions();
-    // this heuristic works well for the interpreter-only case
-    size_t num_instructions = next_report.instructions.size();
-    if (num_instructions >= (1 << 20) && num_instructions >= 2 * last_report.instructions.size())
+    DispatchCacheEntry* entry = FindBlock(PC);
+    entry->usecount += 1;
+    const u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
+    bool jump_out = flags & JUMP_OUT;
+    if (flags & BLOCK_OVERRUN)
     {
-      CompactInterpreterBlocks(&last_report, true);
-      next_report.invalidations.clear();
+      jump_out = HandleOverrun(entry);
     }
-    do
+    if (jump_out)
     {
-      DispatchCacheEntry* entry = FindBlock(PC);
-      entry->usecount += 1;
-      u32 flags = entry->executor(this, entry->offset, &PowerPC::ppcState, nullptr);
-      if (flags & BLOCK_OVERRUN)
+      if (PowerPC::ppcState.Exceptions)
       {
-        HandleOverrun(entry);
+        PowerPC::CheckExceptions();
       }
-      PowerPC::CheckExceptions();
-      PowerPC::CheckBreakPoints();
-    } while (PowerPC::ppcState.downcount > 0 && *state == CPU::State::Running);
+      if (PowerPC::ppcState.downcount <= 0)
+      {
+        CoreTiming::Advance();
+        PowerPC::CheckExternalExceptions();
+        // this heuristic works well for the interpreter-only case
+        size_t num_instructions = next_report.instructions.size();
+        if (num_instructions >= (1 << 20) &&
+            num_instructions >= 2 * last_report.instructions.size())
+        {
+          CompactInterpreterBlocks(&last_report, true);
+          next_report.invalidations.clear();
+        }
+      }
+    }
+    PowerPC::CheckBreakPoints();
   }
 }
