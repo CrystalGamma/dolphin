@@ -251,6 +251,7 @@ protected:
   virtual void BaselineCompile(std::vector<u32> suggestions) = 0;
   std::vector<BaselineCompileJob> PrepareBaselineSuggestions(std::vector<u32> suggestions);
   void AddJITBlock(u32 address, CompiledBlock block);
+  std::vector<u32> AllAffectedBlocks(u32 address);
 
   static constexpr u32 BASELINE_THRESHOLD = 16;
   static constexpr u32 REPORT_THRESHOLD = 128;

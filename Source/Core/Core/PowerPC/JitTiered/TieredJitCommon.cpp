@@ -112,6 +112,9 @@ void JitTieredCommon::Run()
     u32 flags = cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
     if (flags & REPORT_BAIL)
     {
+      // make sure we don't run into the same bail again
+      cache_entry->Invalidate();
+      next_report.invalidation_bloom |= BloomCacheline(PC);
       next_report.bails.push_back({PC, flags});
       flags = HandleBail(PC);
     }
@@ -352,7 +355,7 @@ JitTieredCommon::PrepareBaselineSuggestions(std::vector<u32> suggestions)
     do
     {
       const u32 this_bb = address + 4 * buf.size();
-      if (pos < suggestions.size() && suggestions[pos] == this_bb)
+      while (pos < suggestions.size() && suggestions[pos] == this_bb)
       {
         // skip this suggestion, since we're already building it into our block. if it turns out
         // this block is entered from a different block, it will come up again eventually
@@ -391,6 +394,19 @@ void JitTieredCommon::AddJITBlock(u32 address, CompiledBlock block)
   auto iter = jit_block_db.find(address);
   ASSERT(iter != jit_block_db.end());
   iter->second.entry_points.push_back(std::move(block));
+}
+
+std::vector<u32> JitTieredCommon::AllAffectedBlocks(u32 address)
+{
+  std::vector<u32> res;
+  auto iter = jit_block_db.lower_bound(address);
+  if (iter == jit_block_db.end() || iter->first + iter->second.instructions.size() < address)
+  {
+    return res;
+  }
+  res = iter->second.inlined_in;
+  res.push_back(iter->first);
+  return std::move(res);
 }
 
 bool JitTieredCommon::BaselineIteration()
@@ -543,6 +559,18 @@ bool JitTieredCommon::BaselineIteration()
   for (Bail bail : baseline_report.bails)
   {
     all_bails.insert(bail);
+    for (u32 bb_addr : AllAffectedBlocks(bail.guest_address))
+    {
+      auto iter = jit_block_db.find(bb_addr);
+      if (iter != jit_block_db.end())
+      {
+        iter->second.entry_points.clear();
+        if (iter->second.runcount > BASELINE_THRESHOLD)
+        {
+          baseline_suggestions.push_back(bb_addr);
+        }
+      }
+    }
   }
 
   BaselineCompile(baseline_suggestions);
