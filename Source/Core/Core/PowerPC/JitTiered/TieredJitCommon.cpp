@@ -110,8 +110,10 @@ void JitTieredCommon::Run()
     const u32 usecount = cache_entry->usecount + 1;
     cache_entry->usecount = usecount;
     u32 flags = cache_entry->executor(this, cache_entry->offset, &PowerPC::ppcState, current_toc);
-    if (flags & REPORT_BAIL)
+    bool bail = flags & REPORT_BAIL;
+    if (bail)
     {
+      WARN_LOG(DYNA_REC, "bailing @ %08x", PC);
       // make sure we don't run into the same bail again
       cache_entry->Invalidate();
       next_report.invalidation_bloom |= BloomCacheline(PC);
@@ -125,7 +127,7 @@ void JitTieredCommon::Run()
       {
         jump_out = HandleOverrun(cache_entry);
       }
-      else
+      else if (cache_entry->IsValid() && !PowerPC::breakpoints.IsAddressBreakPoint(PC))
       {
         // this case is super-rare: to create this scenario, the block would need to be executed
         // often enough to be JITted, but exit with an exception every time, but once it is compiled
@@ -173,9 +175,9 @@ void JitTieredCommon::Run()
       }
     }
     if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
-        flags & (REPORT_IMMEDIATELY | REPORT_BAIL))
+        flags & REPORT_IMMEDIATELY || bail)
     {
-      CPUDoReport(flags & REPORT_IMMEDIATELY, flags & REPORT_BAIL);
+      CPUDoReport(flags & REPORT_IMMEDIATELY, bail);
       if (!cpu_thread_lock.owns_lock())
       {
         cpu_thread_lock = std::unique_lock(disp_cache_mutex);
@@ -243,7 +245,7 @@ u32 JitTieredCommon::HandleBail(u32 start_addr)
     }
   }
   buf.push_back({});
-  return InterpretBlock(&buf[0]);
+  return InterpretBlock(&buf[0]) & ~BLOCK_OVERRUN;
 }
 
 JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCacheEntry* cache_entry,
@@ -374,8 +376,7 @@ JitTieredCommon::PrepareBaselineSuggestions(std::vector<u32> suggestions)
       {
         buf.push_back(inst);
       }
-      // assume we have to go to dispatcher if the BB didn't end in a conditional branch
-    } while (buf.back().inst.OPCD != 16);
+    } while (buf.back().inst.OPCD == 16 || !IsRedispatchInstruction(buf.back().inst));
     jobs.push_back({address, std::move(buf), std::move(additional_bbs)});
   }
   return std::move(jobs);
@@ -572,6 +573,7 @@ bool JitTieredCommon::BaselineIteration()
       }
     }
   }
+  baseline_report.bails.clear();
 
   BaselineCompile(baseline_suggestions);
 

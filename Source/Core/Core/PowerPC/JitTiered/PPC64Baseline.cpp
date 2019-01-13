@@ -272,7 +272,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
             s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
       }
     }
-    /*else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
+    else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
       // lmw/stmw – FIXME: like the Interpreter version, this implementation does not roll back on
       // failure
@@ -315,7 +315,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       BC(BR_DEC_NZ, 0, BR_NORMAL, -12);
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
-    }*/
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
@@ -640,7 +640,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   const bool is_store = op & 4;
   const bool is_update = op & 1;
 
-  const bool use_slowmem = true;  // !bails.empty();
+  const bool use_slowmem = !bails.empty();
 
   if (use_slowmem)
   {
@@ -721,7 +721,8 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     }
     GPR base = reg_cache.GetMemoryBase(this);
 
-    exits.emplace_back(B(), Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
+    exits.emplace_back(this->instructions.size(),
+                       Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
 
     switch (op >> 1)
     {
