@@ -272,7 +272,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
             s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
       }
     }
-    else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
+    /*else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
       // lmw/stmw – FIXME: like the Interpreter version, this implementation does not roll back on
       // failure
@@ -315,7 +315,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       BC(BR_DEC_NZ, 0, BR_NORMAL, -12);
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
-    }
+    }*/
     else
     {
       FallbackToInterpreter(inst, *opinfo);
@@ -348,12 +348,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     SetBranchTarget(fexit.leave_pc);
     fexit.reg_cache.ReleaseRegisters();
 
-    GPR scratch = fexit.reg_cache.GetScratch(this);
-    LWZ(scratch, ppcs, OFF_DOWNCOUNT);
-    ADDI(scratch, scratch, -s16(fexit.downcount));
-    STW(scratch, ppcs, OFF_DOWNCOUNT);
     fexit.reg_cache.PrepareReturn(this, 1);
-    LoadUnsignedImmediate(fexit.reg_cache.GetReturnRegister(0), 0);
+    LoadUnsignedImmediate(fexit.reg_cache.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
     RestoreRegistersReturn(fexit.reg_cache.saved_regs);
   }
 
@@ -393,6 +389,10 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     ORI(scratch, scratch, exc);
     STW(scratch, ppcs, OFF_EXCEPTIONS);
   }
+  // decrement *before* skip – important for timing equivalency to Generic
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(jump.downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
   if (jump.flags & SKIP)
   {
     GPR target = rc.PrepareCall(this, 0);
@@ -423,10 +423,6 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     LoadUnsignedImmediate(scratch, jump.link_address);
     STW(scratch, ppcs, SPROffset(SPR_LR));
   }
-  // decrement *after* skip – important for timing equivalency to Generic
-  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
-  ADDI(scratch, scratch, -s16(jump.downcount));
-  STW(scratch, ppcs, OFF_DOWNCOUNT);
   rc.PrepareReturn(this, 1);
   LoadUnsignedImmediate(rc.GetReturnRegister(0), jump.flags & FASTMEM_BAIL ?
                                                      JitTieredGeneric::REPORT_BAIL :
@@ -465,6 +461,10 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   STW(scratch, ppcs, OFF_PC);
   ADDI(scratch, scratch, 4);
   STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
+  downcount = 0;
   u32 fallback_index;
   switch (inst.OPCD)
   {
@@ -510,7 +510,7 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
   XORIS(scratch2, scratch, u16((address + 4) >> 16));
   CMPLI(CR0, CMP_WORD, scratch2, u16((address + 4) & 0xffff));
   auto jump_exit = BC(BR_FALSE, CR0 + EQ);
-  fallback_exits.push_back({reg_cache, scratch, jump_exit, exc_exit, downcount});
+  fallback_exits.push_back({reg_cache, scratch, jump_exit, exc_exit});
 }
 
 void PPC64BaselineCompiler::BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo)
@@ -640,7 +640,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   const bool is_store = op & 4;
   const bool is_update = op & 1;
 
-  const bool use_slowmem = !bails.empty();
+  const bool use_slowmem = true;  // !bails.empty();
 
   if (use_slowmem)
   {
@@ -721,8 +721,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     }
     GPR base = reg_cache.GetMemoryBase(this);
 
-    exits.emplace_back(this->instructions.size(),
-                       Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
+    exits.emplace_back(B(), Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
 
     switch (op >> 1)
     {

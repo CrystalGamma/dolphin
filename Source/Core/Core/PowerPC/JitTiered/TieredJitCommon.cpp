@@ -127,7 +127,8 @@ void JitTieredCommon::Run()
         // this case is super-rare: to create this scenario, the block would need to be executed
         // often enough to be JITted, but exit with an exception every time, but once it is compiled
         // and discovered by the CPU thread, run without exception.
-        WARN_LOG(DYNA_REC, "true JIT overrun @ %08x", PC);
+        ERROR_LOG(DYNA_REC, "true JIT overrun @ %08x", PC);
+        ASSERT(false);
         std::vector<DecodedInstruction> insts;
         u32 address;
         {
