@@ -15,32 +15,6 @@ static constexpr s16 GPROffset(u32 i)
   return s16(offsetof(PowerPC::PowerPCState, gpr) + 4 * i);
 }
 
-void RegisterCache::EstablishStackFrame(PPC64BaselineCompiler* comp, u8 save_regs)
-{
-  ASSERT(saved_regs == 0 && save_regs >= 3 && save_regs <= 18);
-  // save return pointer
-  comp->MFSPR(PPCEmitter::R0, PPCEmitter::SPR_LR);
-  comp->STD(PPCEmitter::R0, PPCEmitter::R1, 16);
-
-  // save caller registers and write back-chain word
-  saved_regs = save_regs;
-  comp->relocations.push_back(
-      comp->B(PPCEmitter::BR_LINK, comp->offsets.save_gprs + (18 - saved_regs) * 4));
-  comp->STD(PPCEmitter::R1, PPCEmitter::R1, -32 - 8 * saved_regs, PPCEmitter::UPDATE);
-  for (u8 i = 32 - save_regs; i < 32; ++i)
-  {
-    reg_state[i] = FREE;
-  }
-
-  // copy our variables
-  comp->MoveReg(PPCEmitter::R31, PPCEmitter::R5);
-  reg_state[5] = FREE;
-  reg_state[31] = PPCSTATE_PTR;
-  comp->ADDI(PPCEmitter::R30, PPCEmitter::R6, 0x4000);
-  reg_state[6] = FREE;
-  reg_state[30] = TOC_PTR;
-}
-
 void RegisterCache::SetCR0(PPCEmitter* emit, GPR host_gpr)
 {
   if (HoldsGuestRegister(host_gpr) && !IsSignExtended(host_gpr))
@@ -93,8 +67,7 @@ void RegisterCache::InvalidateAllRegisters()
   {
     const u16 prev_state = reg_state[i];
     ASSERT(!(prev_state & FLAG_GUEST_UNSAVED));
-    if (reg_state[i] != RESERVED && reg_state[i] != HOST_UNSAVED && reg_state[i] != TOC_PTR &&
-        reg_state[i] != PPCSTATE_PTR)
+    if (reg_state[i] != RESERVED && reg_state[i] != TOC_PTR && reg_state[i] != PPCSTATE_PTR)
     {
       reg_state[i] = FREE;
     }
@@ -256,30 +229,14 @@ GPR RegisterCache::GetMemoryBase(PPCEmitter* emit)
 
 GPR RegisterCache::GetPPCState()
 {
-  for (u8 i = 0; i < 32; ++i)
-  {
-    if (reg_state[i] == PPCSTATE_PTR)
-    {
-      return static_cast<GPR>(i);
-    }
-  }
-  ERROR_LOG(DYNA_REC, "ppcState went missing!");
-  ASSERT(false);
-  return PPCEmitter::R0;
+  ASSERT(reg_state[31] == PPCSTATE_PTR);
+  return PPCEmitter::R31;
 }
 
 GPR RegisterCache::GetToC()
 {
-  for (u8 i = 0; i < 32; ++i)
-  {
-    if (reg_state[i] == TOC_PTR)
-    {
-      return static_cast<GPR>(i);
-    }
-  }
-  ERROR_LOG(DYNA_REC, "ToC went missing!");
-  ASSERT(false);
-  return PPCEmitter::R0;
+  ASSERT(reg_state[30] == TOC_PTR);
+  return PPCEmitter::R30;
 }
 
 void RegisterCache::FlushHostRegister(PPCEmitter* emit, GPR host_gpr)

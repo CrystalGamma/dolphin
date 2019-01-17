@@ -18,45 +18,35 @@ static constexpr s16 SPROffset(u32 i)
   return s16(offsetof(PowerPC::PowerPCState, spr) + 4 * i);
 }
 
-void PPC64BaselineCompiler::RestoreRegistersReturn(u32 saved_regs)
-{
-  ADDI(R1, R1, 32 + 8 * saved_regs);
-  relocations.push_back(B(BR_NORMAL, offsets.restore_gpr_return + (18 - saved_regs) * 4));
-}
-
-void PPC64BaselineCompiler::RestoreRegisters(u32 saved_regs)
-{
-  ADDI(R12, R1, 32 + 8 * saved_regs);
-  relocations.push_back(B(BR_LINK, offsets.restore_gpr + (18 - saved_regs) * 4));
-}
-
 void PPC64BaselineCompiler::EmitCommonRoutines()
 {
-  // these three are recommended sequences from the ELFv2 spec
-  offsets.save_gprs = instructions.size() * 4;
-  for (s16 reg = 14; reg < 32; ++reg)
+  // all JIT blocks begin with the same two instructions: mflr r0; bl prologue
+  offsets.prologue = instructions.size() * 4;
+  // store callers LR
+  STD(R0, R1, 16);
+  // write back-chain dword
+  STD(R1, R1, -176, UPDATE);
+  for (u8 i = 14; i < 32; ++i)
   {
-    STD(static_cast<GPR>(R0 + reg), R1, 8 * (reg - 32));
+    STD(static_cast<GPR>(R0 + i), R1, 32 + 8 * (i - 14));
   }
+  // bring the ppcState pointer and ToC pointer to where the register cache expects them
+  MoveReg(R31, R5);
+  ADDI(R30, R6, 0x4000);
   BCLR();
 
-  offsets.restore_gpr_return = instructions.size() * 4;
-  for (s16 reg = 14; reg < 29; ++reg)
+  // jump to this to restore all non-volatile registers and return
+  offsets.epilogue = instructions.size() * 4;
+  for (u8 i = 14; i < 29; ++i)
   {
-    LD(static_cast<GPR>(R0 + reg), R1, 8 * (reg - 32));
+    LD(static_cast<GPR>(R0 + i), R1, 32 + 8 * (i - 14));
   }
+  ADDI(R1, R1, 176);
   LD(R0, R1, 16);
   LD(R29, R1, -24);
   MTSPR(SPR_LR, R0);
   LD(R30, R1, -16);
   LD(R31, R1, -8);
-  BCLR();
-
-  offsets.restore_gpr = instructions.size() * 4;
-  for (s16 reg = 14; reg < 32; ++reg)
-  {
-    LD(static_cast<GPR>(R0 + reg), R12, 8 * (reg - 32));
-  }
   BCLR();
 
   offsets.end = instructions.size() * 4;
@@ -68,12 +58,9 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 {
   address = addr;
   reg_cache = RegisterCache();
-  u8 save_regs = 3 + guest_instructions.size() / 2;
-  if (guest_instructions.size() > 30)
-  {
-    save_regs = 18;
-  }
-  reg_cache.EstablishStackFrame(this, save_regs);
+
+  MFSPR(R0, SPR_LR);
+  relocations.push_back(B(BR_LINK, offsets.prologue));
 
   std::vector<u32> this_inst_bails;
   size_t bails_pos = 0;
@@ -337,7 +324,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     reg_cache.PrepareReturn(this, 1);
     LoadUnsignedImmediate(reg_cache.GetReturnRegister(0),
                           block_end ? 0 : JitTieredGeneric::BLOCK_OVERRUN);
-    RestoreRegistersReturn(reg_cache.saved_regs);
+    relocations.push_back(B(BR_NORMAL, offsets.epilogue));
   }
 
   for (auto fexit : fallback_exits)
@@ -350,7 +337,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 
     fexit.reg_cache.PrepareReturn(this, 1);
     LoadUnsignedImmediate(fexit.reg_cache.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
-    RestoreRegistersReturn(fexit.reg_cache.saved_regs);
+    relocations.push_back(B(BR_NORMAL, offsets.epilogue));
   }
 
   for (auto& pair : exits)
@@ -427,7 +414,7 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   LoadUnsignedImmediate(rc.GetReturnRegister(0), jump.flags & FASTMEM_BAIL ?
                                                      JitTieredGeneric::REPORT_BAIL :
                                                      JitTieredGeneric::JUMP_OUT);
-  RestoreRegistersReturn(jump.reg_cache.saved_regs);
+  relocations.push_back(B(BR_NORMAL, offsets.epilogue));
 }
 
 void PPC64BaselineCompiler::RelocateAll(u32 offset)

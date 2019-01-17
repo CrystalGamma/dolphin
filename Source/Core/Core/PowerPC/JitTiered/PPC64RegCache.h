@@ -18,18 +18,17 @@ using GPR = PPCEmitter::GPR;
 enum : u16
 {
   FREE = 0,
-  HOST_UNSAVED = 1,
-  RESERVED = 2,
-  TOC_PTR = 3,
-  PPCSTATE_PTR = 4,
-  SCRATCH = 5,
+  RESERVED = 1,
+  TOC_PTR = 2,
+  PPCSTATE_PTR = 3,
+  SCRATCH = 4,
   /// some non-guest-register value, is in non-volatile host register and is not invalidated
-  LOCKED = 6,
+  LOCKED = 5,
   /// argument for a prepared (but not performed) call, or return value of a recently-performed call
   /// not available for register caching, but can be claimed using GetArgumentRegister and
   /// GetReturnRegister
-  ABI = 7,
-  MEMORY_BASE = 8,
+  ABI = 6,
+  MEMORY_BASE = 7,
   DIRTY_R = 32,
   ZEXT_R = 64,
   SEXT_R = 96,
@@ -42,8 +41,7 @@ enum : u16
 struct RegisterCache
 {
   /// state of host registers at this point
-  std::array<u16, 32> reg_state;
-  u8 saved_regs = 0;
+  std::array<u16, 32> reg_state{};
 
   RegisterCache()
   {
@@ -54,27 +52,12 @@ struct RegisterCache
     // register 2 is supposed to be the TOC pointer. we use it for the current memory base, if code
     // does any fastmem accesses
     reg_state[2] = RESERVED;
-    // register 3 is the first argument, starts out as the JIT pointer, which we don't use
-    reg_state[3] = FREE;
-    // register 4 is the second argument, starts out as the offset value from the block DB (not used
-    // currently)
-    reg_state[4] = FREE;
-    // register 5 is the third argument, starts out as the ppcState pointer
-    reg_state[5] = PPCSTATE_PTR;
-    // register 6 is the fourth argument, starts out as the ToC pointer
-    reg_state[6] = TOC_PTR;
-    // remaining volatile registers
-    for (u8 i = 7; i < 13; ++i)
-    {
-      reg_state[i] = FREE;
-    }
     // register 13 is the thread pointer per ABI
     reg_state[13] = RESERVED;
-    // registers 14–31 are non-volatile, so start out unsaved
-    for (u8 i = 14; i < 32; ++i)
-    {
-      reg_state[i] = HOST_UNSAVED;
-    }
+    // register 6 is the fourth argument, starts out as the ToC pointer
+    reg_state[30] = TOC_PTR;
+    // register 5 is the third argument, starts out as the ppcState pointer
+    reg_state[31] = PPCSTATE_PTR;
   }
   bool HoldsGuestRegister(GPR host_gpr) { return (reg_state[host_gpr] & 96) != 0; }
   bool IsSignExtended(GPR host_gpr) { return (reg_state[host_gpr] & 96) == SEXT_R; }
@@ -101,10 +84,14 @@ struct RegisterCache
   void BindGPR(GPR host_gpr, u16 specifier);
   void InvalidateAllRegisters();
 
-  void EstablishStackFrame(PPC64BaselineCompiler* comp, u8 save_regs);
   void FlushHostRegister(PPCEmitter* emit, GPR gpr);
   void FlushAllRegisters(PPCEmitter* emit);
   void ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush, u32 gprs_to_invalidate);
+  void RestoreStandardState(PPCEmitter* emit)
+  {
+    ReduceGuestRegisters(emit, 0xffffffff, 0xffffffff);
+    reg_state[2] = RESERVED;
+  }
 
   GPR GetGPR(PPCEmitter* emit, u16 specifier);
   GPR GetScratch(PPCEmitter* emit, u16 specifier = SCRATCH);
