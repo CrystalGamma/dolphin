@@ -83,6 +83,8 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
     BCCTR(BR_FALSE, CR0 + EQ, HINT_UNPREDICTABLE, false);
     // fallthrough for interpreter blocks
 
+    offsets.dispatch_indirect = instructions.size() * 4;
+    offsets.dispatch_direct = instructions.size() * 4;
     SetBranchTarget(invalid_entry);
     SetBranchTarget(downcount_elapse);
     // return to runloop: write PC, NPC
@@ -437,24 +439,22 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     rc.PerformCall(this, 0);
   }
   scratch = rc.GetScratch(this);
-  if (jump.flags & JUMPSPR)
-  {
-    LWZ(scratch, ppcs, SPROffset(jump.address));
-  }
-  else
-  {
-    LoadUnsignedImmediate(scratch, jump.address);
-  }
-  STW(scratch, ppcs, OFF_PC);
-  STW(scratch, ppcs, OFF_NPC);
   if (jump.flags & LINK)
   {
     LoadUnsignedImmediate(scratch, jump.link_address);
     STW(scratch, ppcs, SPROffset(SPR_LR));
   }
-  rc.PrepareReturn(this, 1);
-  LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
-  relocations.push_back(B(BR_NORMAL, offsets.epilogue));
+  rc.RestoreStandardState(this);
+  if (jump.flags & JUMPSPR)
+  {
+    LWZ(R3, ppcs, SPROffset(jump.address));
+    relocations.push_back(B(BR_NORMAL, offsets.dispatch_indirect));
+  }
+  else
+  {
+    LoadUnsignedImmediate(R3, jump.address);
+    relocations.push_back(B(BR_NORMAL, offsets.dispatch_direct));
+  }
 }
 
 void PPC64BaselineCompiler::WriteExceptionExit(const ExceptionExit& eexit)
