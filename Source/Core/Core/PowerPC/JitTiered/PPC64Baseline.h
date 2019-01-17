@@ -28,6 +28,8 @@ public:
     void (*store_hword)(u16 val, u32 addr);
     void* physical_base;
     void* logical_base;
+    JitTieredGeneric::Executor interpreter_executor;
+    JitTieredGeneric::DispatchCacheEntry* dispatch_cache;
     std::array<void (*)(UGeckoInstruction), 64 + 4 * 1024 + 32> fallback_table;
   };
   static_assert(offsetof(TableOfContents, logical_base) -
@@ -38,6 +40,8 @@ public:
   struct CommonRoutineOffsets
   {
     u32 prologue;
+    u32 dispatch_indirect;
+    u32 dispatch_direct;
     u32 epilogue;
     u32 end;
   };

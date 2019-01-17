@@ -10,6 +10,8 @@
 #include "Common/Assert.h"
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
+#define TOC_OFFSET(field) s16(s32(offsetof(TableOfContents, field)) - 0x4000)
+
 // for short register state labels
 using namespace PPC64RegCache;
 
@@ -34,6 +36,62 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
   MoveReg(R31, R5);
   ADDI(R30, R6, 0x4000);
   BCLR();
+
+  // these routines will write the downcount and check it, and, if they don't find a JIT block to
+  // jump to, write PC=NPC=target_address and return to runloop
+  {
+    // parameters
+    const GPR target_address = R3;
+    const GPR current_downcount = R4;
+    // calculated by dispatch_indirect, or precalculated (presumably constant) by caller for
+    // dispatch_direct
+    const GPR cache_offset = R5;
+
+    offsets.dispatch_indirect = instructions.size() * 4;
+    const u8 key_bits = JitTieredGeneric::DISP_CACHE_SHIFT;
+    RLWINM(cache_offset, target_address, 30, 32 - key_bits, 31);
+    for (u8 shift = 2 + key_bits; shift < 32; shift += key_bits)
+    {
+      RLWINM(R12, target_address, 32 - shift, shift + key_bits <= 32 ? 32 - key_bits : shift, 31);
+      XOR(cache_offset, cache_offset, R12);
+    }
+    MULLI(cache_offset, cache_offset, s16(sizeof(JitTieredGeneric::DispatchCacheEntry)));
+
+    offsets.dispatch_direct = instructions.size() * 4;
+    // check and write downcount
+    CMPI(CR0, CMP_WORD, current_downcount, 0);
+    STW(current_downcount, R31, OFF_DOWNCOUNT);
+    const FixupBranch downcount_elapse = BC(BR_FALSE, CR0 + GT);
+    LD(R12, R30, TOC_OFFSET(dispatch_cache));
+    ADD(R12, cache_offset, R12);
+    LWZ(R11, R12, s16(offsetof(JitTieredGeneric::DispatchCacheEntry, address)));
+    const GPR executor = R10;
+    LD(executor, R12, s16(offsetof(JitTieredGeneric::DispatchCacheEntry, executor)));
+    // check if block is valid and for our address
+    CMP(CR7, CMP_WORD, R11, target_address);
+    CMPLI(CR0, CMP_DWORD, executor, 0);
+    CRANDC(CR0 + EQ, CR7 + EQ, CR0 + EQ);
+    // if no, search victim cache and lookup block if needed (TODO, just return to runloop for now)
+    const FixupBranch invalid_entry = BC(BR_FALSE, CR0 + EQ);
+    // check if the block is an interpreter block but don't jump anywhere yet
+    LD(R9, R30, TOC_OFFSET(interpreter_executor));
+    CMP(CR0, CMP_DWORD, executor, R9);
+    // skip prologue
+    ADDI(executor, executor, 8);
+    MTSPR(SPR_CTR, executor);
+    // jump only for non-interpreter blocks
+    BCCTR(BR_FALSE, CR0 + EQ, HINT_UNPREDICTABLE, false);
+    // fallthrough for interpreter blocks
+
+    SetBranchTarget(invalid_entry);
+    SetBranchTarget(downcount_elapse);
+    // return to runloop: write PC, NPC
+    STW(target_address, R31, OFF_PC);
+    STW(target_address, R31, OFF_NPC);
+    // dispatcher being called implies we've had a jump
+    LoadUnsignedImmediate(R3, JitTieredGeneric::JUMP_OUT);
+  }
+  // fallthrough
 
   // jump to this to restore all non-volatile registers and return
   offsets.epilogue = instructions.size() * 4;

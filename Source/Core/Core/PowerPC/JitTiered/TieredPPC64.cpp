@@ -63,6 +63,8 @@ JitTieredPPC64::JitTieredPPC64()
   toc.load_hword_sext = LoadHWord_SExt;
   toc.physical_base = Memory::physical_base;
   toc.logical_base = Memory::logical_base;
+  toc.interpreter_executor = interpreter_executor;
+  toc.dispatch_cache = &dispatch_cache[0];
   current_toc = next_toc = &toc;
   on_thread_baseline = false;
 }
