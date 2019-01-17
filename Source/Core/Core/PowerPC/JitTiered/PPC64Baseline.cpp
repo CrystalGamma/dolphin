@@ -148,8 +148,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // test for FP bit
       ANDI_Rc(scratch, scratch, 1 << 13);
       reg_cache.FreeGPR(scratch);
-      exits.emplace_back(BC(BR_TRUE, CR0 + EQ),
-                         Exit{reg_cache, address, downcount, EXCEPTION | RAISE_FPU_EXCEPTION, 0});
+      exception_exits.push_back(
+          {BC(BR_TRUE, CR0 + EQ), reg_cache, address, downcount, EXCEPTION_FPU_UNAVAILABLE});
       float_checked = true;
     }
 
@@ -320,7 +320,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
       // lmw/stmw – FIXME: like the Interpreter version, this implementation does not roll back on
-      // failure
+      // failure FIXME: doesn't generate Alignment Exception
       GPR mem_address = reg_cache.GetScratch(this);
       ADDI(mem_address, reg_cache.GetGPR(this, DIRTY_R + inst.RA), inst.SIMM_16);
       // zero-extend the guest address
@@ -404,6 +404,12 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     WriteExit(pair.second);
   }
 
+  for (auto& eexit : exception_exits)
+  {
+    SetBranchTarget(eexit.branch);
+    WriteExceptionExit(eexit);
+  }
+
   for (auto& handler : fastmem_handlers)
   {
     fault_handlers.emplace_back(handler.location, this->instructions.size());
@@ -416,23 +422,6 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
   RegisterCache rc = jump.reg_cache;
   GPR ppcs = rc.GetPPCState();
   GPR scratch = rc.GetScratch(this);
-  if (jump.flags & (RAISE_FPU_EXCEPTION | RAISE_ALIGNMENT_EXCEPTION))
-  {
-    u16 exc;
-    if (jump.flags & RAISE_FPU_EXCEPTION)
-    {
-      exc = u16(EXCEPTION_FPU_UNAVAILABLE);
-    }
-    else
-    {
-      ASSERT(jump.flags & RAISE_ALIGNMENT_EXCEPTION);
-      exc = u16(EXCEPTION_ALIGNMENT);
-      STW(static_cast<GPR>(jump.link_address), ppcs, SPROffset(SPR_DAR));
-    }
-    LWZ(scratch, ppcs, OFF_EXCEPTIONS);
-    ORI(scratch, scratch, exc);
-    STW(scratch, ppcs, OFF_EXCEPTIONS);
-  }
   // decrement *before* skip – important for timing equivalency to Generic
   LWZ(scratch, ppcs, OFF_DOWNCOUNT);
   ADDI(scratch, scratch, -s16(jump.downcount));
@@ -457,16 +446,35 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     LoadUnsignedImmediate(scratch, jump.address);
   }
   STW(scratch, ppcs, OFF_PC);
-  if (jump.flags & EXCEPTION)
-  {
-    ADDI(scratch, scratch, 4);
-  }
-  STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
+  STW(scratch, ppcs, OFF_NPC);
   if (jump.flags & LINK)
   {
     LoadUnsignedImmediate(scratch, jump.link_address);
     STW(scratch, ppcs, SPROffset(SPR_LR));
   }
+  rc.PrepareReturn(this, 1);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
+  relocations.push_back(B(BR_NORMAL, offsets.epilogue));
+}
+
+void PPC64BaselineCompiler::WriteExceptionExit(const ExceptionExit& eexit)
+{
+  RegisterCache rc = eexit.reg_cache;
+  GPR ppcs = rc.GetPPCState();
+  GPR scratch = rc.GetScratch(this);
+  if (eexit.raise)
+  {
+    LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+    ORI(scratch, scratch, u16(eexit.raise));
+    STW(scratch, ppcs, OFF_EXCEPTIONS);
+  }
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(eexit.downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
+  LoadUnsignedImmediate(scratch, eexit.address);
+  STW(scratch, ppcs, OFF_PC);
+  ADDI(scratch, scratch, 4);
+  STW(scratch, ppcs, OFF_NPC);
   rc.PrepareReturn(this, 1);
   LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
   relocations.push_back(B(BR_NORMAL, offsets.epilogue));
@@ -844,7 +852,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     // check for exceptions
     LWZ(scratch, ppcs, OFF_EXCEPTIONS);
     ANDI_Rc(scratch, scratch, u16(JitTieredGeneric::EXCEPTION_SYNC));
-    exits.emplace_back(BC(BR_FALSE, CR0 + EQ), Exit{reg_cache, address, downcount, EXCEPTION, 0});
+    exception_exits.push_back({BC(BR_FALSE, CR0 + EQ), reg_cache, address, downcount, 0});
     if (!is_store)
     {
       rst = reg_cache.GetReturnRegister(0);

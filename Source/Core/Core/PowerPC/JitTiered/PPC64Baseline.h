@@ -63,10 +63,6 @@ private:
     LINK = 1,
     SKIP = 2,
     JUMPSPR = 4,
-    EXCEPTION = 8,
-    RAISE_FPU_EXCEPTION = 16,
-    RAISE_ALIGNMENT_EXCEPTION = 32,
-    FASTMEM_BAIL = 64
   };
 
   struct Exit
@@ -86,6 +82,15 @@ private:
     s32 downcount;
   };
 
+  struct ExceptionExit
+  {
+    FixupBranch branch;
+    PPC64RegCache::RegisterCache reg_cache;
+    u32 address;
+    s32 downcount;
+    u32 raise;
+  };
+
   struct FallbackExit
   {
     PPC64RegCache::RegisterCache reg_cache;
@@ -99,6 +104,7 @@ private:
 
   void WriteExit(const Exit& jump);
   void WriteFastmemHandler(const FastmemHandler& handler);
+  void WriteExceptionExit(const ExceptionExit& eexit);
 
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
@@ -116,4 +122,5 @@ private:
   std::vector<std::pair<FixupBranch, Exit>> exits;
   std::vector<FallbackExit> fallback_exits;
   std::vector<FastmemHandler> fastmem_handlers;
+  std::vector<ExceptionExit> exception_exits;
 };
