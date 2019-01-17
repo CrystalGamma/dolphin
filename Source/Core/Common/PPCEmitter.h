@@ -185,7 +185,7 @@ public:
 
   void MULLI(GPR rt, GPR ra, s16 imm) { DFormInstructionSigned(7, rt, ra, imm); }
 
-  void RLWINM(GPR ra, GPR rs, u32 sh, u32 mb, u32 me) { MFormInstruction(21, ra, rs, sh, mb, me); }
+  void RLWINM(GPR ra, GPR rs, u32 sh, u32 mb, u32 me) { MFormInstruction(21, rs, ra, sh, mb, me); }
   void SRAWI(GPR ra, GPR rs, u32 sh)
   {
     XFormInstruction(31, rs, ra, static_cast<GPR>(sh & 31), 824);
