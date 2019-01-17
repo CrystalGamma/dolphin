@@ -21,6 +21,11 @@
 class JitTieredGeneric : public JitBase
 {
 public:
+  // for invalidation of JIT blocks
+  using Bloom = u64;
+
+  using Executor = u32 (*)(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
+                           void* toc);
   enum ExecutorFlags : u32
   {
     BLOCK_OVERRUN = 1,
@@ -28,6 +33,21 @@ public:
     REPORT_BAIL = 4,
     REPORT_IMMEDIATELY = 8,
   };
+
+  struct DispatchCacheEntry
+  {
+    u32 address;
+    u32 offset;
+    Executor executor;
+    Bloom bloom;
+    u32 length;
+    u32 usecount;
+
+    bool IsValid() const { return executor != nullptr; }
+    void Invalidate() { executor = nullptr; }
+  };
+  static_assert(sizeof(DispatchCacheEntry) <= 32, "Dispatch cache entry should fit in 32 bytes");
+
   struct Bail
   {
     u32 guest_address;
@@ -47,6 +67,7 @@ public:
     /// see Instructionflags
     u16 flags;
   };
+  static_assert(sizeof(DecodedInstruction) <= 16, "Decoded instruction should fit in 16 bytes");
   enum InstructionFlags : u16
   {
     // this instruction causes FPU Unavailable if MSR.FP=0 (not checked in the interpreter
@@ -83,31 +104,14 @@ public:
 
   static bool IsRedispatchInstruction(const UGeckoInstruction inst);
 
+  static constexpr u32 DispatchCacheKey(u32 addr) { return XorFold<DISP_CACHE_SHIFT, 2>(addr); }
+
   static constexpr u32 EXCEPTION_SYNC =
       ~(EXCEPTION_EXTERNAL_INT | EXCEPTION_PERFORMANCE_MONITOR | EXCEPTION_DECREMENTER);
 
+  static constexpr int DISP_CACHE_SHIFT = 9;
+
 protected:
-  // for invalidation of JIT blocks
-  using Bloom = u64;
-  using Executor = u32 (*)(JitTieredGeneric* self, u32 offset, PowerPC::PowerPCState* ppcState,
-                           void* toc);
-
-  struct DispatchCacheEntry
-  {
-    u32 address;
-    u32 offset;
-    Executor executor;
-    Bloom bloom;
-    u32 length;
-    u32 usecount;
-
-    bool IsValid() const { return executor != nullptr; }
-    void Invalidate() { executor = nullptr; }
-  };
-  static_assert(sizeof(DispatchCacheEntry) <= 32, "Dispatch cache entry should fit in 32 bytes");
-
-  static_assert(sizeof(DecodedInstruction) <= 16, "Decoded instruction should fit in 16 bytes");
-
   struct Invalidation
   {
     u32 first;
@@ -132,8 +136,6 @@ protected:
     }
     return address;
   }
-
-  static constexpr u32 DispatchCacheKey(u32 addr) { return XorFold<DISP_CACHE_SHIFT, 2>(addr); }
 
   static Bloom BloomNone() { return 0; }
   static Bloom BloomAll() { return ~BloomNone(); }
@@ -170,7 +172,6 @@ protected:
 
   static constexpr size_t MAX_BLOCK_LENGTH = 1024;
 
-  static constexpr int DISP_CACHE_SHIFT = 9;
   static constexpr size_t DISP_PRIMARY_CACHE_SIZE = 1 << DISP_CACHE_SHIFT;
   static constexpr int VICTIM_SETS_SHIFT = 6;
   static constexpr size_t VICTIM_SETS = 1 << VICTIM_SETS_SHIFT;
