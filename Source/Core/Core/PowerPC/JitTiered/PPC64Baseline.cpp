@@ -344,16 +344,16 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // loop:
       if (inst.OPCD == 46)
       {
-        exits.emplace_back(this->instructions.size(),
-                           Exit{reg_cache, downcount - u32(opinfo->numCycles), FASTMEM_BAIL, 0});
+        fastmem_handlers.push_back(
+            {this->instructions.size(), reg_cache, downcount - u32(opinfo->numCycles)});
         LWBRX(value, mem_address, base);
         STWU(value, scratch, 4);
       }
       else
       {
         LWZU(value, scratch, 4);
-        exits.emplace_back(this->instructions.size(),
-                           Exit{reg_cache, downcount - u32(opinfo->numCycles), FASTMEM_BAIL, 0});
+        fastmem_handlers.push_back(
+            {this->instructions.size(), reg_cache, downcount - u32(opinfo->numCycles)});
         STWBRX(value, mem_address, base);
       }
       ADDI(mem_address, mem_address, 4);
@@ -400,15 +400,14 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 
   for (auto& pair : exits)
   {
-    if (!(pair.second.flags & FASTMEM_BAIL))
-    {
-      SetBranchTarget(pair.first);
-    }
-    else
-    {
-      fault_handlers.emplace_back(pair.first, this->instructions.size());
-    }
+    SetBranchTarget(pair.first);
     WriteExit(pair.second);
+  }
+
+  for (auto& handler : fastmem_handlers)
+  {
+    fault_handlers.emplace_back(handler.location, this->instructions.size());
+    WriteFastmemHandler(handler);
   }
 }
 
@@ -469,9 +468,23 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     STW(scratch, ppcs, SPROffset(SPR_LR));
   }
   rc.PrepareReturn(this, 1);
-  LoadUnsignedImmediate(rc.GetReturnRegister(0), jump.flags & FASTMEM_BAIL ?
-                                                     JitTieredGeneric::REPORT_BAIL :
-                                                     JitTieredGeneric::JUMP_OUT);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
+  relocations.push_back(B(BR_NORMAL, offsets.epilogue));
+}
+
+void PPC64BaselineCompiler::WriteFastmemHandler(const FastmemHandler& handler)
+{
+  RegisterCache rc = handler.reg_cache;
+  GPR ppcs = rc.GetPPCState();
+  GPR scratch = rc.GetScratch(this);
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(handler.downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
+  LoadUnsignedImmediate(scratch, handler.address);
+  STW(scratch, ppcs, OFF_PC);
+  STW(scratch, ppcs, OFF_NPC);
+  rc.PrepareReturn(this, 1);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::REPORT_BAIL);
   relocations.push_back(B(BR_NORMAL, offsets.epilogue));
 }
 
@@ -766,8 +779,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     }
     GPR base = reg_cache.GetMemoryBase(this);
 
-    exits.emplace_back(this->instructions.size(),
-                       Exit{reg_cache, address, downcount, FASTMEM_BAIL, 0});
+    fastmem_handlers.push_back({this->instructions.size(), reg_cache, address, downcount});
 
     switch (op >> 1)
     {

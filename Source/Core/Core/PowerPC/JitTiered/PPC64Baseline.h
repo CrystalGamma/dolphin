@@ -78,6 +78,14 @@ private:
     u32 link_address;
   };
 
+  struct FastmemHandler
+  {
+    FixupBranch location;
+    PPC64RegCache::RegisterCache reg_cache;
+    u32 address;
+    s32 downcount;
+  };
+
   struct FallbackExit
   {
     PPC64RegCache::RegisterCache reg_cache;
@@ -90,6 +98,7 @@ private:
   void RestoreRegistersReturn(u32 saved_regs);
 
   void WriteExit(const Exit& jump);
+  void WriteFastmemHandler(const FastmemHandler& handler);
 
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
@@ -106,4 +115,5 @@ private:
 
   std::vector<std::pair<FixupBranch, Exit>> exits;
   std::vector<FallbackExit> fallback_exits;
+  std::vector<FastmemHandler> fastmem_handlers;
 };
