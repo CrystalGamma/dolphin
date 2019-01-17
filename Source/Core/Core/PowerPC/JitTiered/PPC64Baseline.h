@@ -92,6 +92,7 @@ private:
   void LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinfo, const std::vector<u32>& bails);
 
   static constexpr s16 OFF_PC = s16(offsetof(PowerPC::PowerPCState, pc));
+  static constexpr s16 OFF_NPC = s16(offsetof(PowerPC::PowerPCState, npc));
   static constexpr s16 OFF_DOWNCOUNT = s16(offsetof(PowerPC::PowerPCState, downcount));
   static constexpr s16 OFF_EXCEPTIONS = s16(offsetof(PowerPC::PowerPCState, Exceptions));
 

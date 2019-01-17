@@ -316,7 +316,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     GPR scratch = reg_cache.GetScratch(this);
     LoadUnsignedImmediate(scratch, address);
     STW(scratch, ppcs, OFF_PC);
-    STW(scratch, ppcs, s16(offsetof(PowerPC::PowerPCState, npc)));
+    STW(scratch, ppcs, OFF_NPC);
     LWZ(scratch, ppcs, OFF_DOWNCOUNT);
     ADDI(scratch, scratch, -s16(downcount));
     STW(scratch, ppcs, OFF_DOWNCOUNT);
