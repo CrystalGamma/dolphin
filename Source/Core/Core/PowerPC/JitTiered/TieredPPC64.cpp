@@ -6,6 +6,8 @@
 
 #include <cinttypes>
 
+#include "Common/JitRegister.h"
+#include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
 #include "Core/HW/CPU.h"
 #include "Core/HW/Memmap.h"
@@ -24,12 +26,21 @@ JitTieredPPC64::JitTieredPPC64()
   compiler.EmitCommonRoutines();
   routine_offsets = compiler.offsets;
   codespace.AllocCodeSpace(CODESPACE_CELL_SIZE * CODESPACE_CELLS + routine_offsets.end);
+  JitRegister::Init(SConfig::GetInstance().m_perfDir);
   // <= instead of < because we want a copy of the routines at the end
   for (u32 i = 0; i <= CODESPACE_CELLS / ROUTINES_INTERVAL; ++i)
   {
     u32 index = i << 24;
     INFO_LOG(DYNA_REC, "Installing common routines at offset %x (0x%016" PRIx64 ")", index * 4,
              u64(codespace.GetPtrAtIndex(index)));
+    JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.prologue),
+                          routine_offsets.dispatch_indirect - routine_offsets.prologue,
+                          "jit_prologue");
+    JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.dispatch_indirect),
+                          routine_offsets.epilogue - routine_offsets.dispatch_indirect,
+                          "jit_dispatcher");
+    JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.epilogue),
+                          (routine_offsets.end - routine_offsets.epilogue) * 4, "jit_epilogue");
     codespace.SetOffset(index);
     codespace.Emit(compiler.instructions);
   }
@@ -219,8 +230,10 @@ void JitTieredPPC64::BaselineCompile(std::vector<u32> suggestions)
     codespace.SetOffset(current_offset / 4);
     codespace.Emit(compiler.instructions);
     block.offset = current_offset;
-    block.executor = reinterpret_cast<Executor>(codespace.GetPtrAtIndex(current_offset / 4));
+    void* ptr = codespace.GetPtrAtIndex(current_offset / 4);
+    block.executor = reinterpret_cast<Executor>(ptr);
     block.host_length = len;
+    JitRegister::Register(ptr, block.host_length, "jit_baseline%08x", job.address);
     block.guest_length = job.instructions.size();
     block.bloom = BloomRange(job.address, job.address + block.guest_length);
     block.additional_bbs = std::move(job.additional_bbs);
