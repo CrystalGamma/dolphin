@@ -254,8 +254,10 @@ protected:
   void AddJITBlock(u32 address, CompiledBlock block);
   std::vector<u32> AllAffectedBlocks(u32 address);
 
-  static constexpr u32 BASELINE_THRESHOLD = 16;
   static constexpr u32 REPORT_THRESHOLD = 128;
+  static constexpr u32 INTERPRETER_SCORE = 1;
+  static constexpr u32 ADVANCE_SCORE = 1;
+  static constexpr u32 BASELINE_THRESHOLD = 16;
   /// FIXME
   static constexpr size_t CACHELINE = 128;
 
@@ -268,6 +270,7 @@ protected:
   void* current_toc = nullptr;
 
   bool breakpoint_handled = false;
+  u32 report_score = 0;
 
   std::map<uintptr_t, uintptr_t> fault_handlers;
 

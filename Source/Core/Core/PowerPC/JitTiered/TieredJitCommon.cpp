@@ -49,6 +49,7 @@ void JitTieredCommon::CPUDoReport(bool wait, bool hint)
       lock.unlock();
       // if the Baseline JIT thread is waiting for us, wake it up
       report_cv.notify_one();
+      report_score = 0;
     }
     else
     {
@@ -71,9 +72,9 @@ u32 JitTieredCommon::CheckBPAndInterpret(JitTieredGeneric* self, u32 offset,
   // on baseline code checking for breakpoints can take ≥10% of the CPU thread time if it is done at
   // every block. instead we only check on interpreter blocks (which are slow anyway) and reject JIT
   // blocks that contain breakpoints
+  JitTieredCommon* xself = static_cast<JitTieredCommon*>(self);
   if (PowerPC::breakpoints.IsAddressBreakPoint(PC))
   {
-    JitTieredCommon* xself = static_cast<JitTieredCommon*>(self);
     if (!xself->breakpoint_handled)
     {
       // we haven't stopped at this breakpoint yet
@@ -87,6 +88,8 @@ u32 JitTieredCommon::CheckBPAndInterpret(JitTieredGeneric* self, u32 offset,
       xself->breakpoint_handled = false;
     }
   }
+  xself->report_score += INTERPRETER_SCORE;
+
   return InterpreterExecutor(self, offset, ppcState, toc);
 }
 
@@ -174,8 +177,7 @@ void JitTieredCommon::Run()
         }
       }
     }
-    if ((cache_entry->executor == interpreter_executor && usecount >= REPORT_THRESHOLD) ||
-        flags & REPORT_IMMEDIATELY || bail)
+    if (flags & REPORT_IMMEDIATELY || bail)
     {
       CPUDoReport(flags & REPORT_IMMEDIATELY, bail);
       if (!cpu_thread_lock.owns_lock())
@@ -189,16 +191,23 @@ void JitTieredCommon::Run()
       {
         PowerPC::CheckExceptions();
       }
-      if (PowerPC::ppcState.downcount <= 0)
+      bool do_report = report_score >= REPORT_THRESHOLD;
+      if (do_report)
       {
         // advancing the time might block (e. g. on the GPU)
         // or keep us busy for a while (copying data around),
         // so try to report before doing so
         CPUDoReport(false, next_report.instructions.size() >= (1 << 16));
+      }
+      if (PowerPC::ppcState.downcount <= 0)
+      {
+        report_score += ADVANCE_SCORE;
 
         CoreTiming::Advance();
         PowerPC::CheckExternalExceptions();
-
+      }
+      if (do_report)
+      {
         if (!cpu_thread_lock.owns_lock())
         {
           cpu_thread_lock = std::unique_lock(disp_cache_mutex);
