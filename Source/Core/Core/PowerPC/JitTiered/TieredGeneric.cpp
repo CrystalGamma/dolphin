@@ -73,8 +73,10 @@ void JitTieredGeneric::InvalidateICache(const u32 address, const u32 size, const
 void JitTieredGeneric::CompactInterpreterBlocks(BaselineReport* const report,
                                                 const bool keep_old_blocks)
 {
-  report->instructions.clear();
-  report->instructions.push_back({});
+  // swap all instructions into the report
+  next_report.instructions.swap(report->instructions);
+  next_report.instructions.clear();
+  next_report.instructions.push_back({});
   report->blocks.clear();
   for (auto& entry : dispatch_cache)
   {
@@ -82,20 +84,21 @@ void JitTieredGeneric::CompactInterpreterBlocks(BaselineReport* const report,
     {
       continue;
     }
+    report->blocks.push_back(entry);
     if (entry.executor == interpreter_executor)
     {
       const u32 offset = entry.offset;
       const u32 len = entry.length;
       if (len > 0 && (keep_old_blocks || offset >= offset_new))
       {
-        const u32 pos = u32(report->instructions.size());
+        // update offset to position after compaction
+        entry.offset = next_report.instructions.size();
+        // copy recent interpreter block instructions back
         for (u32 n = 0; n < len; n += 1)
         {
-          report->instructions.push_back(next_report.instructions[offset + n]);
+          next_report.instructions.push_back(report->instructions[offset + n]);
         }
-        report->instructions.push_back({});
-        // update offset to position after compaction
-        entry.offset = pos;
+        next_report.instructions.push_back({});
       }
       else
       {
@@ -105,11 +108,8 @@ void JitTieredGeneric::CompactInterpreterBlocks(BaselineReport* const report,
         entry.Invalidate();
       }
     }
-    report->blocks.push_back(entry);
     entry.usecount = 0;
   }
-  // copy compacted blocks into interpreter cache
-  next_report.instructions = report->instructions;
   offset_new = next_report.instructions.size();
 }
 
