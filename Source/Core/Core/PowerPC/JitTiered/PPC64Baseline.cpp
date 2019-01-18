@@ -329,20 +329,31 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       STD(scratch, reg_cache.GetPPCState(),
           s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
     }
-    else if (inst.OPCD == 31 && inst.SUBOP10 == 467 && inst.RB == 0 &&
-             (inst.RA == 8 || inst.RB == 9))
+    else if (inst.OPCD == 31 && (inst.SUBOP10 == 467 || inst.SUBOP10 == 339))
     {
-      // mtctr/mtlr
-      GPR rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
-      STW(rs, reg_cache.GetPPCState(), SPROffset(inst.RA));
-    }
-    else if (inst.OPCD == 31 && inst.SUBOP10 == 339 && inst.RB == 0 &&
-             (inst.RA == 8 || inst.RB == 9))
-    {
-      // mfctr/mflr
-      GPR rt = reg_cache.GetScratch(this);
-      LWZ(rt, reg_cache.GetPPCState(), SPROffset(inst.RA));
-      reg_cache.BindGPR(rt, ZEXT_R + inst.RD);
+      // mfspr/mtspr for select SPRs (currently LR, CTR and the GQRs)
+      u32 spr = (inst.RB << 5) | inst.RA;
+      if (spr == 8 || spr == 9 || (spr >= 912 && spr <= 919))
+      {
+        if (inst.SUBOP10 == 467)
+        {
+          // mtspr
+          GPR rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+          STW(rs, reg_cache.GetPPCState(), SPROffset(spr));
+        }
+        else
+        {
+          // mfspr
+          ASSERT(inst.SUBOP10 == 339);
+          GPR rt = reg_cache.GetScratch(this);
+          LWZ(rt, reg_cache.GetPPCState(), SPROffset(spr));
+          reg_cache.BindGPR(rt, ZEXT_R + inst.RD);
+        }
+      }
+      else
+      {
+        FallbackToInterpreter(inst, *opinfo);
+      }
     }
     else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
