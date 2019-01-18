@@ -300,8 +300,8 @@ JitTieredGeneric::DispatchCacheEntry* JitTieredCommon::LookupBlock(DispatchCache
     entry.bloom = jit_block->bloom;
     entry.offset = jit_block->offset;
     entry.length = jit_block->guest_length;
-    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x, length %u)", address, entry.offset,
-             entry.length);
+    INFO_LOG(DYNA_REC, "found JIT block @ %08x (offset %x, length %u, executor 0x%" PRIxPTR ")",
+             address, entry.offset, entry.length, uintptr_t(entry.executor));
 
     for (auto& handler : jit_block->fault_handlers)
     {

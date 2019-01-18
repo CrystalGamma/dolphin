@@ -83,8 +83,6 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
     BCCTR(BR_FALSE, CR0 + EQ, HINT_UNPREDICTABLE, false);
     // fallthrough for interpreter blocks
 
-    offsets.dispatch_indirect = instructions.size() * 4;
-    offsets.dispatch_direct = instructions.size() * 4;
     SetBranchTarget(invalid_entry);
     SetBranchTarget(downcount_elapse);
     // return to runloop: write PC, NPC
@@ -423,13 +421,13 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
 {
   RegisterCache rc = jump.reg_cache;
   GPR ppcs = rc.GetPPCState();
-  GPR scratch = rc.GetScratch(this);
-  // decrement *before* skip – important for timing equivalency to Generic
-  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
-  ADDI(scratch, scratch, -s16(jump.downcount));
-  STW(scratch, ppcs, OFF_DOWNCOUNT);
   if (jump.flags & SKIP)
   {
+    GPR scratch = rc.GetScratch(this);
+    // decrement *before* skip – important for timing equivalency to Generic
+    LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+    ADDI(scratch, scratch, -s16(jump.downcount));
+    STW(scratch, ppcs, OFF_DOWNCOUNT);
     GPR target = rc.PrepareCall(this, 0);
     // ppcs is invalidated by PrepareCall
     ppcs = rc.GetPPCState();
@@ -438,23 +436,29 @@ void PPC64BaselineCompiler::WriteExit(const Exit& jump)
     rc.BindCall(this);
     rc.PerformCall(this, 0);
   }
-  scratch = rc.GetScratch(this);
-  if (jump.flags & LINK)
-  {
-    LoadUnsignedImmediate(scratch, jump.link_address);
-    STW(scratch, ppcs, SPROffset(SPR_LR));
-  }
   rc.RestoreStandardState(this);
   if (jump.flags & JUMPSPR)
   {
     LWZ(R3, ppcs, SPROffset(jump.address));
-    relocations.push_back(B(BR_NORMAL, offsets.dispatch_indirect));
   }
   else
   {
     LoadUnsignedImmediate(R3, jump.address);
-    relocations.push_back(B(BR_NORMAL, offsets.dispatch_direct));
+    LoadUnsignedImmediate(R5, JitTieredGeneric::DispatchCacheKey(jump.address) *
+                                  sizeof(JitTieredGeneric::DispatchCacheEntry));
   }
+  LWZ(R4, ppcs, OFF_DOWNCOUNT);
+  if (!(jump.flags & SKIP))
+  {
+    ADDI(R4, R4, -s16(jump.downcount));
+  }
+  if (jump.flags & LINK)
+  {
+    LoadUnsignedImmediate(R6, jump.link_address);
+    STW(R6, ppcs, SPROffset(SPR_LR));
+  }
+  relocations.push_back(
+      B(BR_NORMAL, jump.flags & JUMPSPR ? offsets.dispatch_indirect : offsets.dispatch_direct));
 }
 
 void PPC64BaselineCompiler::WriteExceptionExit(const ExceptionExit& eexit)
