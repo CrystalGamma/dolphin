@@ -272,6 +272,7 @@ public:
   void ORC(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 412); }
 
   void ADD(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 266); }
+  void SUBF(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 40); }
 
   void MoveReg(GPR rt, GPR rs) { OR(rt, rs, rs); }
 

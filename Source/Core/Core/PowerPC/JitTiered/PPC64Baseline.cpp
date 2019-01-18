@@ -317,6 +317,18 @@ void PPC64BaselineCompiler::Compile(u32 addr,
             s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
       }
     }
+    else if (inst.OPCD == 31 && inst.SUBOP10 == 0)
+    {
+      // cmp: sign extension of inputs is important here
+      GPR ra = reg_cache.GetGPR(this, SEXT_R + inst.RA);
+      GPR rb = reg_cache.GetGPR(this, SEXT_R + inst.RB);
+      GPR scratch = reg_cache.GetScratch(this);
+      // subf rx, rb, ra = rx ← ra - rb
+      SUBF(scratch, rb, ra);
+      // do NOT sign-extend the output of compares!
+      STD(scratch, reg_cache.GetPPCState(),
+          s16(offsetof(PowerPC::PowerPCState, cr_val) + 8 * inst.CRFD));
+    }
     else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
       // lmw/stmw – FIXME: like the Interpreter version, this implementation does not roll back on
