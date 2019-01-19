@@ -315,6 +315,20 @@ void PPC64BaselineCompiler::Compile(u32 addr,
         reg_cache.SetCR0(this, rt);
       }
     }
+    else if (inst.OPCD == 31 && (inst.SUBOP10 == 954 || inst.SUBOP10 == 922 || inst.SUBOP10 == 26))
+    {
+      // leading bits operations (extsb, extsh, cntlzw)
+      GPR rs = reg_cache.GetGPR(this, DIRTY_R + inst.RD);
+      GPR ra = reg_cache.GetScratch(this);
+      // these are well-defined for all inputs, so let's just override the registers with ours
+      XFormInstruction(31, rs, ra, R0, inst.SUBOP10);
+      // cntlzw only results in 0–32, so technically it's *both* sign- and zero-extended
+      reg_cache.BindGPR(ra, SEXT_R + inst.RA);
+      if (inst.Rc)
+      {
+        reg_cache.SetCR0(this, ra);
+      }
+    }
     else if (inst.OPCD == 11)
     {
       // cmpi: sign extension of input is important here
