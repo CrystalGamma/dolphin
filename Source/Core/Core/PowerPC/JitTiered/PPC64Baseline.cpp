@@ -447,9 +447,10 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
     }
-    else if (inst.OPCD == 4 && (inst.SUBOP5 == 21 || inst.SUBOP5 == 20) && inst.Rc == 0)
+    else if (inst.OPCD == 4 && (inst.SUBOP5 == 21 || inst.SUBOP5 == 20 || inst.SUBOP5 == 18) &&
+             inst.Rc == 0)
     {
-      // ps_add, ps_sub
+      // ps_add, ps_sub, ps_div
       reg_cache.GuestFPSCR(this);
       const GPR ppcs = reg_cache.GetPPCState();
       // do second member first, so FPRF reflect the first one
