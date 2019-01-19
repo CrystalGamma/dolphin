@@ -27,10 +27,11 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
   // store callers LR
   STD(R0, R1, 16);
   // write back-chain dword
-  STD(R1, R1, -176, UPDATE);
+  const s16 main_frame_size = 40;
+  STD(R1, R1, -144 - main_frame_size, UPDATE);
   for (u8 i = 14; i < 32; ++i)
   {
-    STD(static_cast<GPR>(R0 + i), R1, 32 + 8 * (i - 14));
+    STD(static_cast<GPR>(R0 + i), R1, main_frame_size + 8 * (i - 14));
   }
   // bring the ppcState pointer and ToC pointer to where the register cache expects them
   MoveReg(R31, R5);
@@ -97,14 +98,14 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
   offsets.epilogue = instructions.size() * 4;
   for (u8 i = 14; i < 29; ++i)
   {
-    LD(static_cast<GPR>(R0 + i), R1, 32 + 8 * (i - 14));
+    LD(static_cast<GPR>(R0 + i), R1, main_frame_size + 8 * (i - 14));
   }
-  ADDI(R1, R1, 176);
-  LD(R0, R1, 16);
-  LD(R29, R1, -24);
+  LD(R0, R1, 16 + 144 + main_frame_size);
+  LD(R29, R1, 120 + main_frame_size);
   MTSPR(SPR_LR, R0);
-  LD(R30, R1, -16);
-  LD(R31, R1, -8);
+  LD(R30, R1, 128 + main_frame_size);
+  LD(R31, R1, 136 + main_frame_size);
+  ADDI(R1, R1, 144 + main_frame_size);
   BCLR();
 
   offsets.end = instructions.size() * 4;
