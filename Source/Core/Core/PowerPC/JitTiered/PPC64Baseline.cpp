@@ -484,6 +484,26 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       STFD(F1, ppcs, OFF_PS1(inst.RD));
       STFD(F3, ppcs, OFF_PS0(inst.RD));
     }
+    else if (inst.OPCD == 4 && inst.SUBOP5 >= 28 && inst.SUBOP5 <= 31 && inst.Rc == 0)
+    {
+      // PS MAD
+      reg_cache.GuestFPSCR(this);
+      const GPR ppcs = reg_cache.GetPPCState();
+      // do second member first, so FPRF reflect the first one
+      LFD(F1, ppcs, OFF_PS1(inst.RA));
+      LFD(F2, ppcs, OFF_PS1(inst.RB));
+      LFD(F3, ppcs, OFF_PS1(inst.RC));
+      LFD(F4, ppcs, OFF_PS0(inst.RA));
+      LFD(F5, ppcs, OFF_PS0(inst.RB));
+      LFD(F6, ppcs, OFF_PS0(inst.RC));
+      AFormInstruction(63, F1, F1, F2, F3, inst.SUBOP5);
+      AFormInstruction(63, F4, F4, F5, F6, inst.SUBOP5);
+      FRSP(F1, F1);
+      FRSP(F4, F4);
+      // FIXME: flush denormals
+      STFD(F1, ppcs, OFF_PS1(inst.RD));
+      STFD(F4, ppcs, OFF_PS0(inst.RD));
+    }
     else
     {
       FallbackToInterpreter(inst, *opinfo);
