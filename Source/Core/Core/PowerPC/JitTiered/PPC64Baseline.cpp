@@ -447,9 +447,9 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
     }
-    else if (inst.OPCD == 4 && inst.SUBOP5 == 21 && inst.Rc == 0)
+    else if (inst.OPCD == 4 && (inst.SUBOP5 == 21 || inst.SUBOP5 == 20) && inst.Rc == 0)
     {
-      // ps_add
+      // ps_add, ps_sub
       reg_cache.GuestFPSCR(this);
       const GPR ppcs = reg_cache.GetPPCState();
       // do second member first, so FPRF reflect the first one
@@ -457,8 +457,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       LFD(F2, ppcs, OFF_PS1(inst.RB));
       LFD(F3, ppcs, OFF_PS0(inst.RA));
       LFD(F4, ppcs, OFF_PS0(inst.RB));
-      FADD(F1, F1, F2);
-      FADD(F3, F3, F4);
+      AFormInstruction(63, F1, F1, F2, 0, inst.SUBOP5);
+      AFormInstruction(63, F3, F3, F4, 0, inst.SUBOP5);
       FRSP(F1, F1);
       FRSP(F3, F3);
       // FIXME: flush denormals
