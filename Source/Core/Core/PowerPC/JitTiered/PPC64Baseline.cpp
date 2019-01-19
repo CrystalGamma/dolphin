@@ -11,6 +11,8 @@
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
 #define TOC_OFFSET(field) s16(s32(offsetof(TableOfContents, field)) - 0x4000)
+#define OFF_PS0(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg))
+#define OFF_PS1(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg) + 8)
 
 // for short register state labels
 using namespace PPC64RegCache;
@@ -40,7 +42,6 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
 
   // TODO: optimize this if VSX is available
   offsets.guest_fpscr = instructions.size() * 4;
-  TW();
   const s16 off_fpscr = s16(offsetof(PowerPC::PowerPCState, fpscr));
   LWZ(R0, R31, off_fpscr);
   // mask off the enable bits and NI
@@ -54,7 +55,6 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
 
   // TODO: optimize this if VSX is available
   offsets.host_fpscr = instructions.size() * 4;
-  TW();
   MFFS(F0);
   LFD(F1, R1, 32);
   STFD(F0, R1, -8);
@@ -432,6 +432,24 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       BC(BR_DEC_NZ, 0, BR_NORMAL, -12);
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
+    }
+    else if (inst.OPCD == 4 && inst.SUBOP5 == 21)
+    {
+      // ps_add
+      reg_cache.GuestFPSCR(this);
+      const GPR ppcs = reg_cache.GetPPCState();
+      // do second member first, so FPRF reflect the first one
+      LFD(F1, ppcs, OFF_PS1(inst.RA));
+      LFD(F2, ppcs, OFF_PS1(inst.RB));
+      LFD(F3, ppcs, OFF_PS0(inst.RA));
+      LFD(F4, ppcs, OFF_PS0(inst.RB));
+      FADD(F1, F1, F2);
+      FADD(F3, F3, F4);
+      FRSP(F1, F1);
+      FRSP(F3, F3);
+      // FIXME: flush denormals
+      STFD(F1, ppcs, OFF_PS1(inst.RD));
+      STFD(F3, ppcs, OFF_PS0(inst.RD));
     }
     else
     {
