@@ -40,6 +40,8 @@ public:
   struct CommonRoutineOffsets
   {
     u32 prologue;
+    u32 guest_fpscr;
+    u32 host_fpscr;
     u32 dispatch_indirect;
     u32 dispatch_direct;
     u32 epilogue;

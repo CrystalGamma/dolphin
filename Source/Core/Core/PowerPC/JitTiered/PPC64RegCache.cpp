@@ -251,14 +251,15 @@ void RegisterCache::FlushHostRegister(PPCEmitter* emit, GPR host_gpr)
   }
 }
 
-void RegisterCache::FlushAllRegisters(PPCEmitter* emit)
+void RegisterCache::FlushAllRegisters(PPC64BaselineCompiler* comp)
 {
+  HostFPSCR(comp);
   for (u8 i = 0; i < 32; ++i)
   {
     const GPR reg = static_cast<GPR>(i);
     if (HoldsGuestRegister(reg))
     {
-      FlushHostRegister(emit, reg);
+      FlushHostRegister(comp, reg);
     }
   }
 }
@@ -283,6 +284,13 @@ void RegisterCache::ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush,
       reg_state[i] = FREE;
     }
   }
+}
+
+void RegisterCache::RestoreStandardState(PPC64BaselineCompiler* comp)
+{
+  ReduceGuestRegisters(static_cast<PPCEmitter*>(comp), 0xffffffff, 0xffffffff);
+  reg_state[2] = RESERVED;
+  HostFPSCR(comp);
 }
 
 GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
@@ -366,7 +374,7 @@ void RegisterCache::BindCall(PPCEmitter* emit)
   emit->MTSPR(PPCEmitter::SPR_CTR, PPCEmitter::R12);
 }
 
-void RegisterCache::PerformCall(PPCEmitter* emit, u8 num_return_gprs)
+void RegisterCache::PerformCall(PPC64BaselineCompiler* comp, u8 num_return_gprs)
 {
   ASSERT(num_return_gprs < 10);
   for (u8 i = 0; i < 13; ++i)
@@ -374,23 +382,46 @@ void RegisterCache::PerformCall(PPCEmitter* emit, u8 num_return_gprs)
     const GPR reg = static_cast<GPR>(i);
     if (HoldsGuestRegister(reg))
     {
-      FlushHostRegister(emit, reg);
+      FlushHostRegister(comp, reg);
     }
     if (reg_state[i] != RESERVED)
     {
       reg_state[i] = i >= 3 && i < 3 + num_return_gprs ? ABI : FREE;
     }
   }
-  emit->BCCTR();
+  HostFPSCR(comp);
+  comp->BCCTR();
 }
 
-void RegisterCache::PrepareReturn(PPCEmitter* emit, u8 num_return_gprs)
+void RegisterCache::PrepareReturn(PPC64BaselineCompiler* comp, u8 num_return_gprs)
 {
-  FlushAllRegisters(emit);
+  FlushAllRegisters(comp);
   for (u8 i = 3; i < 3 + num_return_gprs; ++i)
   {
     reg_state[i] = ABI;
   }
+}
+
+void RegisterCache::GuestFPSCR(PPC64BaselineCompiler* comp)
+{
+  if (guest_fpscr)
+  {
+    return;
+  }
+  comp->relocations.push_back(comp->B(PPCEmitter::BR_LINK, comp->offsets.guest_fpscr));
+  guest_fpscr = true;
+}
+
+void RegisterCache::HostFPSCR(PPC64BaselineCompiler* comp)
+{
+  if (!guest_fpscr)
+  {
+    return;
+  }
+  // this routine uses r0 and r2
+  reg_state[2] = RESERVED;
+  comp->relocations.push_back(comp->B(PPCEmitter::BR_LINK, comp->offsets.host_fpscr));
+  guest_fpscr = false;
 }
 
 }  // namespace PPC64RegCache

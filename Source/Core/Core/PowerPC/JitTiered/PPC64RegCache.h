@@ -42,6 +42,7 @@ struct RegisterCache
 {
   /// state of host registers at this point
   std::array<u16, 32> reg_state{};
+  bool guest_fpscr = false;
 
   RegisterCache()
   {
@@ -85,13 +86,9 @@ struct RegisterCache
   void InvalidateAllRegisters();
 
   void FlushHostRegister(PPCEmitter* emit, GPR gpr);
-  void FlushAllRegisters(PPCEmitter* emit);
+  void FlushAllRegisters(PPC64BaselineCompiler* comp);
   void ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush, u32 gprs_to_invalidate);
-  void RestoreStandardState(PPCEmitter* emit)
-  {
-    ReduceGuestRegisters(emit, 0xffffffff, 0xffffffff);
-    reg_state[2] = RESERVED;
-  }
+  void RestoreStandardState(PPC64BaselineCompiler* comp);
 
   GPR GetGPR(PPCEmitter* emit, u16 specifier);
   GPR GetScratch(PPCEmitter* emit, u16 specifier = SCRATCH);
@@ -99,13 +96,16 @@ struct RegisterCache
   GPR GetToC();
   GPR GetMemoryBase(PPCEmitter* emit);
 
+  void GuestFPSCR(PPC64BaselineCompiler* comp);
+  void HostFPSCR(PPC64BaselineCompiler* comp);
+
   /// invalidates all non-LOCKED register references
   GPR PrepareCall(PPCEmitter* emit, u8 num_parameters);
   void BindCall(PPCEmitter* emit);
   /// invalidates all register references that are not LOCKED, TOC_PTR or PPCSTATE_PTR
-  void PerformCall(PPCEmitter* emit, u8 num_return_gprs);
+  void PerformCall(PPC64BaselineCompiler* comp, u8 num_return_gprs);
   /// invalidates all register references that are not LOCKED, TOC_PTR or PPCSTATE_PTR
-  void PrepareReturn(PPCEmitter* emit, u8 num_return_values);
+  void PrepareReturn(PPC64BaselineCompiler* comp, u8 num_return_values);
 
   void SetCR0(PPCEmitter* emit, GPR host_gpr);
 };

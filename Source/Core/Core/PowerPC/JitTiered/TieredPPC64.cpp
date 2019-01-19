@@ -34,8 +34,10 @@ JitTieredPPC64::JitTieredPPC64()
     INFO_LOG(DYNA_REC, "Installing common routines at offset %x (0x%016" PRIx64 ")", index * 4,
              u64(codespace.GetPtrAtIndex(index)));
     JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.prologue),
-                          routine_offsets.dispatch_indirect - routine_offsets.prologue,
-                          "jit_prologue");
+                          routine_offsets.guest_fpscr - routine_offsets.prologue, "jit_prologue");
+    JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.guest_fpscr),
+                          routine_offsets.dispatch_indirect - routine_offsets.guest_fpscr,
+                          "jit_fpscr");
     JitRegister::Register(codespace.GetPtrAtIndex(index + routine_offsets.dispatch_indirect),
                           routine_offsets.epilogue - routine_offsets.dispatch_indirect,
                           "jit_dispatcher");

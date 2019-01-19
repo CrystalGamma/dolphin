@@ -50,6 +50,42 @@ public:
     R31 = 31
   };
 
+  enum FPR
+  {
+    F0 = 0,
+    F1 = 1,
+    F2 = 2,
+    F3 = 3,
+    F4 = 4,
+    F5 = 5,
+    F6 = 6,
+    F7 = 7,
+    F8 = 8,
+    F9 = 9,
+    F10 = 10,
+    F11 = 11,
+    F12 = 12,
+    F13 = 13,
+    F14 = 14,
+    F15 = 15,
+    F16 = 16,
+    F17 = 17,
+    F18 = 18,
+    F19 = 19,
+    F20 = 20,
+    F21 = 21,
+    F22 = 22,
+    F23 = 23,
+    F24 = 24,
+    F25 = 25,
+    F26 = 26,
+    F27 = 27,
+    F28 = 28,
+    F29 = 29,
+    F30 = 30,
+    F31 = 31
+  };
+
   enum SPR
   {
     SPR_XER = 1,
@@ -143,29 +179,34 @@ public:
   // === instruction form helpers ===
   // these functions take their fields in encoding order, most other functions take them in
   // assembler order (destination-first)
-  void DFormInstruction(u32 opcode, GPR r1, GPR r2, u16 imm)
+  void DFormInstruction(u32 opcode, u32 r1, GPR r2, u16 imm)
   {
     instructions.push_back((opcode << 26) | (u32(r1) << 21) | (u32(r2) << 16) | u32(imm));
   }
-  void DFormInstructionSigned(u32 opcode, GPR r1, GPR r2, s16 imm)
+  void DFormInstructionSigned(u32 opcode, u32 r1, GPR r2, s16 imm)
   {
     DFormInstruction(opcode, r1, r2, Common::BitCast<u16>(imm));
   }
 
-  void XFormInstruction(u32 opcode, GPR r1, GPR r2, GPR r3, u32 subop10)
+  void XFormInstruction(u32 opcode, u32 r1, u32 r2, u32 r3, u32 subop10, Record rc = NO_RC)
   {
-    instructions.push_back((opcode << 26) | (u32(r1) << 21) | (u32(r2) << 16) | (u32(r3) << 11) |
-                           (subop10 << 1));
+    instructions.push_back((opcode << 26) | (r1 << 21) | (r2 << 16) | (r3 << 11) | (subop10 << 1) |
+                           u32(rc));
+  }
+  void AFormInstruction(u32 opcode, u32 r1, u32 r2, u32 r3, u32 r4, u32 subop5, Record rc = NO_RC)
+  {
+    instructions.push_back((opcode << 26) | (r1 << 21) | (r2 << 16) | (r3 << 11) | (r4 << 6) |
+                           (subop5 << 1) | u32(rc));
   }
   void XLFormInstruction(u32 opcode, u32 bt, u32 ba, u32 bb, u32 subop10)
   {
     instructions.push_back((opcode << 26) | ((bt & 31) << 21) | ((ba & 31) << 16) |
                            ((bb & 31) << 11) | (subop10 << 1));
   }
-  void MFormInstruction(u32 opcode, GPR rs, GPR ra, u32 sh, u32 mb, u32 me)
+  void MFormInstruction(u32 opcode, GPR rs, GPR ra, u32 sh, u32 mb, u32 me, Record rc)
   {
     instructions.push_back((opcode << 26) | (u32(rs) << 21) | (u32(ra) << 16) | ((sh & 31) << 11) |
-                           ((mb & 31) << 6) | ((me & 31) << 1));
+                           ((mb & 31) << 6) | ((me & 31) << 1) | u32(rc));
   }
 
   // === integer immediate instructions ===
@@ -185,7 +226,14 @@ public:
 
   void MULLI(GPR rt, GPR ra, s16 imm) { DFormInstructionSigned(7, rt, ra, imm); }
 
-  void RLWINM(GPR ra, GPR rs, u32 sh, u32 mb, u32 me) { MFormInstruction(21, rs, ra, sh, mb, me); }
+  void RLWINM(GPR ra, GPR rs, u32 sh, u32 mb, u32 me, Record rc = NO_RC)
+  {
+    MFormInstruction(21, rs, ra, sh, mb, me, rc);
+  }
+  void RLWIMI(GPR ra, GPR rs, u32 sh, u32 mb, u32 me, Record rc = NO_RC)
+  {
+    MFormInstruction(20, rs, ra, sh, mb, me, rc);
+  }
   void SRAWI(GPR ra, GPR rs, u32 sh)
   {
     XFormInstruction(31, rs, ra, static_cast<GPR>(sh & 31), 824);
@@ -263,7 +311,7 @@ public:
 
   // === reg-reg integer instructions ===
   void OR(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 444); }
-  void AND(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 28); }
+  void AND(GPR ra, GPR rs, GPR rb, Record rc = NO_RC) { XFormInstruction(31, rs, ra, rb, 28, rc); }
   void XOR(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 316); }
   void NAND(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 476); }
   void NOR(GPR ra, GPR rs, GPR rb) { XFormInstruction(31, rs, ra, rb, 124); }
@@ -273,6 +321,8 @@ public:
 
   void ADD(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 266); }
   void SUBF(GPR rt, GPR ra, GPR rb) { XFormInstruction(31, rt, ra, rb, 40); }
+
+  void ISEL(GPR rt, GPR ra, GPR rb, u32 bc) { AFormInstruction(31, rt, ra, rb, bc, 15); }
 
   void MoveReg(GPR rt, GPR rs) { OR(rt, rs, rs); }
 
@@ -357,6 +407,24 @@ public:
     }
   }
   void SetBranchTarget(FixupBranch branch) { Relocate(branch, (instructions.size() - branch) * 4); }
+
+  // === floating point ===
+  void MFFS(FPR frt) { XFormInstruction(63, frt, 0, 0, 583); }
+  void MTFSF(u8 flm, FPR frb, bool l = false, bool w = false)
+  {
+    instructions.push_back((63u << 26) | (u32(l) << 25) | (u32(flm) << 17) | (u32(w) << 16) |
+                           (u32(frb) << 11) | (711u << 1));
+  }
+
+  void FRSP(FPR frt, FPR frb) { XFormInstruction(63, frt, 0, frb, 12); }
+  void FADD(FPR frt, FPR fra, FPR frb, Record rc = NO_RC)
+  {
+    AFormInstruction(63, frt, fra, frb, 0, 21, rc);
+  }
+
+  // === FP load/store ===
+  void LFD(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(50, frt, ra, disp); }
+  void STFD(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(54, frt, ra, disp); }
 
   // === system registers ===
   // the order of the two 5-bit halves of the spr field is reversed in the encoding

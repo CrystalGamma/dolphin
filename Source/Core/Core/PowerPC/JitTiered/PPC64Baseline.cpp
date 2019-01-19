@@ -38,6 +38,39 @@ void PPC64BaselineCompiler::EmitCommonRoutines()
   ADDI(R30, R6, 0x4000);
   BCLR();
 
+  // TODO: optimize this if VSX is available
+  offsets.guest_fpscr = instructions.size() * 4;
+  TW();
+  const s16 off_fpscr = s16(offsetof(PowerPC::PowerPCState, fpscr));
+  LWZ(R0, R31, off_fpscr);
+  // mask off the enable bits and NI
+  RLWINM(R0, R0, 0, 29, 23);
+  STD(R0, R1, -8);
+  MFFS(F0);
+  LFD(F1, R1, -8);
+  STFD(F0, R1, 32);
+  MTFSF(0xff, F1);
+  BCLR();
+
+  // TODO: optimize this if VSX is available
+  offsets.host_fpscr = instructions.size() * 4;
+  TW();
+  MFFS(F0);
+  LFD(F1, R1, 32);
+  STFD(F0, R1, -8);
+  LWZ(R2, R31, off_fpscr);
+  LD(R0, R1, -8);
+  MTFSF(0xff, F1);
+  // insert everything but the enable bits and NI
+  RLWIMI(R2, R0, 0, 29, 23);
+  // recompute FEX bit
+  RLWINM(R0, R2, 22, 2, 6);
+  AND(R0, R0, R2, RC);
+  ORIS(R0, R2, 0x4000);
+  ISEL(R2, R2, R0, CR0 + EQ);
+  STW(R2, R31, off_fpscr);
+  BCLR();
+
   // these routines will write the downcount and check it, and, if they don't find a JIT block to
   // jump to, write PC=NPC=target_address and return to runloop
   {
@@ -459,6 +492,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
 void PPC64BaselineCompiler::WriteExit(const Exit& jump)
 {
   RegisterCache rc = jump.reg_cache;
+  rc.HostFPSCR(this);
   GPR ppcs = rc.GetPPCState();
   if (jump.flags & SKIP)
   {
@@ -551,6 +585,7 @@ void PPC64BaselineCompiler::RelocateAll(u32 offset)
 
 void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo)
 {
+  reg_cache.HostFPSCR(this);
   u32 gprs_to_invalidate = 0;
   if (opinfo.flags & FL_OUT_D)
   {
@@ -865,6 +900,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   }
   else
   {
+    reg_cache.HostFPSCR(this);
     GPR arg1 = reg_cache.GetArgumentRegister(0);
     if (!is_store)
     {
