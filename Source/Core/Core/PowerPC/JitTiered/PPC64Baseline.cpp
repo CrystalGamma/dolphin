@@ -433,7 +433,7 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // don't need to load the last register again
       reg_cache.BindGPR(value, ZEXT_R + 31);
     }
-    else if (inst.OPCD == 4 && inst.SUBOP5 == 21)
+    else if (inst.OPCD == 4 && inst.SUBOP5 == 21 && inst.Rc == 0)
     {
       // ps_add
       reg_cache.GuestFPSCR(this);
