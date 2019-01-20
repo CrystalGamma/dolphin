@@ -404,11 +404,15 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     else if ((inst.OPCD == 46 || inst.OPCD == 47) && this_inst_bails.empty())
     {
       // lmw/stmw – FIXME: like the Interpreter version, this implementation does not roll back on
-      // failure FIXME: doesn't generate Alignment Exception
+      // failure
       GPR mem_address = reg_cache.GetScratch(this);
       ADDI(mem_address, reg_cache.GetGPR(this, DIRTY_R + inst.RA), inst.SIMM_16);
       // zero-extend the guest address
       RLWINM(mem_address, mem_address, 0, 0, 31);
+      GPR scratch = reg_cache.GetScratch(this);
+      ANDI_Rc(scratch, mem_address, 3);
+      memory_exceptions.push_back({BC(BR_FALSE, CR0 + EQ), reg_cache, address, downcount,
+                                   EXCEPTION_ALIGNMENT, mem_address});
 
       // keep all registers below RT
       u32 register_mask = ~((u32(1) << inst.RD) - 1);
@@ -416,7 +420,6 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       reg_cache.ReduceGuestRegisters(this, register_mask, inst.OPCD == 46 ? register_mask : 0, 0,
                                      0);
 
-      GPR scratch = reg_cache.GetScratch(this);
       // write number of registers to load into CTR
       LoadUnsignedImmediate(scratch, 32 - inst.RD);
       MTSPR(SPR_CTR, scratch);
@@ -558,6 +561,12 @@ void PPC64BaselineCompiler::Compile(u32 addr,
     WriteExceptionExit(eexit);
   }
 
+  for (auto& eexit : memory_exceptions)
+  {
+    SetBranchTarget(eexit.branch);
+    WriteMemExceptionExit(eexit);
+  }
+
   for (auto& handler : fastmem_handlers)
   {
     fault_handlers.emplace_back(handler.location, this->instructions.size());
@@ -614,6 +623,30 @@ void PPC64BaselineCompiler::WriteExceptionExit(const ExceptionExit& eexit)
 {
   RegisterCache rc = eexit.reg_cache;
   GPR ppcs = rc.GetPPCState();
+  GPR scratch = rc.GetScratch(this);
+  if (eexit.raise)
+  {
+    LWZ(scratch, ppcs, OFF_EXCEPTIONS);
+    ORI(scratch, scratch, u16(eexit.raise));
+    STW(scratch, ppcs, OFF_EXCEPTIONS);
+  }
+  LWZ(scratch, ppcs, OFF_DOWNCOUNT);
+  ADDI(scratch, scratch, -s16(eexit.downcount));
+  STW(scratch, ppcs, OFF_DOWNCOUNT);
+  LoadUnsignedImmediate(scratch, eexit.address);
+  STW(scratch, ppcs, OFF_PC);
+  ADDI(scratch, scratch, 4);
+  STW(scratch, ppcs, OFF_NPC);
+  rc.PrepareReturn(this, 1);
+  LoadUnsignedImmediate(rc.GetReturnRegister(0), JitTieredGeneric::JUMP_OUT);
+  relocations.push_back(B(BR_NORMAL, offsets.epilogue));
+}
+
+void PPC64BaselineCompiler::WriteMemExceptionExit(const MemoryException& eexit)
+{
+  RegisterCache rc = eexit.reg_cache;
+  GPR ppcs = rc.GetPPCState();
+  STW(eexit.address_reg, ppcs, SPROffset(SPR_DAR));
   GPR scratch = rc.GetScratch(this);
   if (eexit.raise)
   {

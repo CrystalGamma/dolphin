@@ -92,6 +92,15 @@ private:
     s32 downcount;
     u32 raise;
   };
+  struct MemoryException
+  {
+    FixupBranch branch;
+    PPC64RegCache::RegisterCache reg_cache;
+    u32 address;
+    s32 downcount;
+    u32 raise;
+    GPR address_reg;
+  };
 
   struct FallbackExit
   {
@@ -107,6 +116,7 @@ private:
   void WriteExit(const Exit& jump);
   void WriteFastmemHandler(const FastmemHandler& handler);
   void WriteExceptionExit(const ExceptionExit& eexit);
+  void WriteMemExceptionExit(const MemoryException& eexit);
 
   void FallbackToInterpreter(UGeckoInstruction inst, GekkoOPInfo& opinfo);
   void BCX(UGeckoInstruction inst, GekkoOPInfo& opinfo);
@@ -125,4 +135,5 @@ private:
   std::vector<FallbackExit> fallback_exits;
   std::vector<FastmemHandler> fastmem_handlers;
   std::vector<ExceptionExit> exception_exits;
+  std::vector<MemoryException> memory_exceptions;
 };

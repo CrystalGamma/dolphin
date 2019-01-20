@@ -90,7 +90,8 @@ public:
   {
     SPR_XER = 1,
     SPR_LR = 8,
-    SPR_CTR = 9
+    SPR_CTR = 9,
+    SPR_DAR = 19,
   };
 
   /// CRF values are always left-aligned in their 5-bit instruction field,
