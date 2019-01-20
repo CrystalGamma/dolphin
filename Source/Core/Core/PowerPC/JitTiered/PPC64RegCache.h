@@ -12,6 +12,7 @@ class PPC64BaselineCompiler;
 namespace PPC64RegCache
 {
 using GPR = PPCEmitter::GPR;
+using FPR = PPCEmitter::FPR;
 /// the least significant 5 bit specify which guest register (if applicable) or what other state the
 /// register is in. the next two bits decide what state the guest register is in (0b00 ↦ not a guest
 /// register, 0b01 ↦ dirty, 0b10 ↦ zero extended, 0b11 ↦ sign extended) upper bits are flags
@@ -38,11 +39,26 @@ enum : u16
   /// this is used to avoid overwriting registers that are used by the current intruction
   FLAG_IN_USE = 256,
 };
+
+enum : u16
+{
+  FPR_FREE = 0,
+  FPR_RESERVED = 1,
+  FPR_SCRATCH = 2,
+  SPLAT_F = 32,
+  PS0_F = 64,
+  PS1_F = 96,
+  MASK_PS_MEMBER = 96,
+  FLAG_FPR_UNSAVED = 1 << 14,
+  FLAG_FPR_IN_USE = 1 << 15,
+};
+
 struct RegisterCache
 {
   /// state of host registers at this point
   std::array<u16, 32> reg_state{};
   bool guest_fpscr = false;
+  std::array<u16, 32> fpr_state{};
 
   RegisterCache()
   {
@@ -59,6 +75,13 @@ struct RegisterCache
     reg_state[30] = TOC_PTR;
     // register 5 is the third argument, starts out as the ppcState pointer
     reg_state[31] = PPCSTATE_PTR;
+    // FPRs 0–2 are used as temporaries in float routines/sequences, so keep them reserved
+    fpr_state[0] = fpr_state[1] = fpr_state[2] = FPR_RESERVED;
+    // we don't (want to) use non-volatile FPRs
+    for (u8 i = 14; i < 32; ++i)
+    {
+      fpr_state[i] = FPR_RESERVED;
+    }
   }
   bool HoldsGuestRegister(GPR host_gpr) { return (reg_state[host_gpr] & 96) != 0; }
   bool IsSignExtended(GPR host_gpr) { return (reg_state[host_gpr] & 96) == SEXT_R; }
@@ -77,17 +100,24 @@ struct RegisterCache
       {
         reg_state[i] = FREE;
       }
+      fpr_state[i] &= ~FLAG_FPR_IN_USE;
+      if (fpr_state[i] == FPR_SCRATCH)
+      {
+        fpr_state[i] = FREE;
+      }
     }
   }
   void FreeGPR(GPR host_gpr) { reg_state[host_gpr] = FREE; }
   GPR GetArgumentRegister(u8 index);
   GPR GetReturnRegister(u8 index);
   void BindGPR(GPR host_gpr, u16 specifier);
+  void BindFPR(FPR host_fpr, u16 specifier);
   void InvalidateAllRegisters();
 
   void FlushHostRegister(PPCEmitter* emit, GPR gpr);
   void FlushAllRegisters(PPC64BaselineCompiler* comp);
-  void ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush, u32 gprs_to_invalidate);
+  void ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush, u32 gprs_to_invalidate,
+                            u32 fprs_to_flush, u32 fprs_to_invalidate);
   void RestoreStandardState(PPC64BaselineCompiler* comp);
 
   GPR GetGPR(PPCEmitter* emit, u16 specifier);
@@ -95,6 +125,10 @@ struct RegisterCache
   GPR GetPPCState();
   GPR GetToC();
   GPR GetMemoryBase(PPCEmitter* emit);
+
+  FPR GetFPR(PPCEmitter* emit, u16 specifier);
+  FPR GetFPRScratch(PPCEmitter* emit);
+  void FlushHostFPR(PPCEmitter* emit, FPR fpr);
 
   void GuestFPSCR(PPC64BaselineCompiler* comp);
   void HostFPSCR(PPC64BaselineCompiler* comp);

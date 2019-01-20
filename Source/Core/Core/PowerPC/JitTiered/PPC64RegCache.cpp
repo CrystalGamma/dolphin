@@ -8,6 +8,9 @@
 #include "Common/Logging/Log.h"
 #include "Core/PowerPC/JitTiered/PPC64Baseline.h"
 
+#define OFF_PS0(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg))
+#define OFF_PS1(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg) + 8)
+
 namespace PPC64RegCache
 {
 static constexpr s16 GPROffset(u32 i)
@@ -71,6 +74,11 @@ void RegisterCache::InvalidateAllRegisters()
     {
       reg_state[i] = FREE;
     }
+    ASSERT(!(fpr_state[i] & FLAG_FPR_UNSAVED));
+    if (fpr_state[i] != FPR_RESERVED)
+    {
+      fpr_state[i] = FPR_FREE;
+    }
   }
 }
 
@@ -102,6 +110,7 @@ GPR RegisterCache::GetGPR(PPCEmitter* emit, u16 specifier)
           emit->EXTSW(res, res);
         }
       }
+      // FIXME: the |= looks wrong
       reg_state[i] |= specifier | FLAG_IN_USE | (reg_state[i] & FLAG_GUEST_UNSAVED);
       INFO_LOG(DYNA_REC, "reusing 0x%x in %u", u32(reg_state[i]), u32(i));
       return res;
@@ -261,34 +270,53 @@ void RegisterCache::FlushAllRegisters(PPC64BaselineCompiler* comp)
     {
       FlushHostRegister(comp, reg);
     }
+    const FPR host_fpr = static_cast<FPR>(i);
+    if (fpr_state[i] & MASK_PS_MEMBER)
+    {
+      FlushHostFPR(comp, host_fpr);
+    }
   }
 }
 
 void RegisterCache::ReduceGuestRegisters(PPCEmitter* emit, u32 gprs_to_flush,
-                                         u32 gprs_to_invalidate)
+                                         u32 gprs_to_invalidate, u32 fprs_to_flush,
+                                         u32 fprs_to_invalidate)
 {
   for (u8 i = 0; i < 32; ++i)
   {
     GPR host_reg = static_cast<GPR>(i);
-    if (!HoldsGuestRegister(host_reg))
+    if (HoldsGuestRegister(host_reg))
     {
-      continue;
+      u8 guest_reg = GetGuestRegister(host_reg);
+      if (gprs_to_flush & (1 << guest_reg))
+      {
+        FlushHostRegister(emit, host_reg);
+      }
+      if (gprs_to_invalidate & (1 << guest_reg))
+      {
+        reg_state[i] = FREE;
+      }
     }
-    u8 guest_reg = GetGuestRegister(host_reg);
-    if (gprs_to_flush & (1 << guest_reg))
+    FPR host_fpr = static_cast<FPR>(i);
+    if (fpr_state[i] & MASK_PS_MEMBER)
     {
-      FlushHostRegister(emit, host_reg);
-    }
-    if (gprs_to_invalidate & (1 << guest_reg))
-    {
-      reg_state[i] = FREE;
+      u8 guest_fpr = fpr_state[i] & 31;
+      if (fprs_to_flush & (1 << guest_fpr))
+      {
+        FlushHostFPR(emit, host_fpr);
+      }
+      if (fprs_to_invalidate & (1 << guest_fpr))
+      {
+        fpr_state[i] = FPR_FREE;
+      }
     }
   }
 }
 
 void RegisterCache::RestoreStandardState(PPC64BaselineCompiler* comp)
 {
-  ReduceGuestRegisters(static_cast<PPCEmitter*>(comp), 0xffffffff, 0xffffffff);
+  ReduceGuestRegisters(static_cast<PPCEmitter*>(comp), 0xffffffff, 0xffffffff, 0xffffffff,
+                       0xffffffff);
   reg_state[2] = RESERVED;
   HostFPSCR(comp);
 }
@@ -361,6 +389,18 @@ GPR RegisterCache::PrepareCall(PPCEmitter* emit, u8 num_parameters)
       reg_state[i] = FREE;
     }
   }
+  for (u8 i = 0; i < 14; ++i)
+  {
+    const FPR fpr = static_cast<FPR>(i);
+    if (fpr_state[i] & MASK_PS_MEMBER)
+    {
+      FlushHostFPR(emit, fpr);
+    }
+    else
+    {
+      fpr_state[i] = FPR_FREE;
+    }
+  }
   if (HoldsGuestRegister(PPCEmitter::R12))
   {
     FlushHostRegister(emit, PPCEmitter::R12);
@@ -387,6 +427,14 @@ void RegisterCache::PerformCall(PPC64BaselineCompiler* comp, u8 num_return_gprs)
     if (reg_state[i] != RESERVED)
     {
       reg_state[i] = i >= 3 && i < 3 + num_return_gprs ? ABI : FREE;
+    }
+    if (fpr_state[i] & MASK_PS_MEMBER)
+    {
+      FlushHostFPR(comp, static_cast<FPR>(i));
+    }
+    if (fpr_state[i] != FPR_RESERVED)
+    {
+      fpr_state[i] = FPR_FREE;
     }
   }
   HostFPSCR(comp);
@@ -422,6 +470,164 @@ void RegisterCache::HostFPSCR(PPC64BaselineCompiler* comp)
   reg_state[2] = RESERVED;
   comp->relocations.push_back(comp->B(PPCEmitter::BR_LINK, comp->offsets.host_fpscr));
   guest_fpscr = false;
+}
+
+FPR RegisterCache::GetFPR(PPCEmitter* emit, u16 specifier)
+{
+  INFO_LOG(DYNA_REC, "getting FPR 0x%x", u32(specifier));
+  ASSERT(specifier >= PS0_F && specifier < PS1_F + 32);
+  const u8 want_member = specifier & 96;
+  u8 reg = specifier & 31;
+  bool found_vacancy = false;
+  bool found_clean = false;
+  u8 spot = 0;
+  for (u8 i = 0; i < 32; ++i)
+  {
+    const u16 state = fpr_state[i];
+    if ((state & 127) == specifier || (state & 127) == SPLAT_F + reg)
+    {
+      FPR res = static_cast<FPR>(i);
+      fpr_state[i] |= FLAG_FPR_IN_USE;
+      INFO_LOG(DYNA_REC, "reusing FPR 0x%x in %u", u32(fpr_state[i]), u32(i));
+      return res;
+    }
+    if (!found_vacancy)
+    {
+      if (state == FPR_FREE)
+      {
+        found_vacancy = true;
+        spot = i;
+      }
+      else if (!found_clean && (state & 96) != 0 && !(state & (FLAG_FPR_UNSAVED | FLAG_FPR_IN_USE)))
+      {
+        found_clean = true;
+        spot = i;
+      }
+    }
+  }
+  const s16 offset = want_member == PS0_F ? OFF_PS0(reg) : OFF_PS1(reg);
+  const GPR ppcs = GetPPCState();
+  if (found_vacancy || found_clean)
+  {
+    const FPR res = static_cast<FPR>(spot);
+    INFO_LOG(DYNA_REC, "loading FPR 0x%x into %u (no spill)", u32(specifier), u32(spot));
+    emit->LFD(res, ppcs, offset);
+    fpr_state[spot] = specifier | FLAG_FPR_IN_USE;
+    return res;
+  }
+  // evict guest register
+  for (u8 i = 0; i < 32; ++i)
+  {
+    const FPR host_fpr = static_cast<FPR>(i);
+    if ((fpr_state[host_fpr] & MASK_PS_MEMBER) && !(fpr_state[host_fpr] & FLAG_FPR_IN_USE))
+    {
+      FlushHostFPR(emit, host_fpr);
+      INFO_LOG(DYNA_REC, "loading FPR 0x%x into %u (spill)", u32(specifier), u32(host_fpr));
+      emit->LFD(host_fpr, ppcs, offset);
+      fpr_state[host_fpr] = specifier | FLAG_FPR_IN_USE;
+      return host_fpr;
+    }
+  }
+  ERROR_LOG(DYNA_REC, "No free FPR to load guest FPR");
+  ASSERT(false);
+  return PPCEmitter::F0;
+}
+
+FPR RegisterCache::GetFPRScratch(PPCEmitter* emit)
+{
+  const s8 first_search = 13;
+  const s8 last_search = 3;
+  bool found_vacancy = false;
+  bool found_clean = false;
+  u8 spot = 0;
+  for (s8 i = first_search; i >= last_search; --i)
+  {
+    const u16 state = fpr_state[i];
+    if (state == FPR_FREE)
+    {
+      found_vacancy = true;
+      spot = u8(i);
+      break;
+    }
+    else if (!found_clean && (state & 96) != 0 && !(state & (FLAG_FPR_UNSAVED | FLAG_FPR_IN_USE)))
+    {
+      found_clean = true;
+      spot = u8(i);
+    }
+  }
+  if (found_vacancy || found_clean)
+  {
+    INFO_LOG(DYNA_REC, "creating scratch FPR in %u (no spill)", u32(spot));
+    fpr_state[spot] = FPR_SCRATCH;
+    return static_cast<FPR>(spot);
+  }
+  // evict guest register
+  for (u8 i = first_search; i >= last_search; --i)
+  {
+    const FPR host_fpr = static_cast<FPR>(i);
+    if ((fpr_state[host_fpr] & MASK_PS_MEMBER) && !(fpr_state[host_fpr] & FLAG_FPR_IN_USE))
+    {
+      FlushHostFPR(emit, host_fpr);
+      WARN_LOG(DYNA_REC, "creating scratch FPR in %u (spill)", u32(host_fpr));
+      fpr_state[host_fpr] = FPR_SCRATCH;
+      return host_fpr;
+    }
+  }
+  ERROR_LOG(DYNA_REC, "No free register to allocate scratch FPR");
+  ASSERT(false);
+  return PPCEmitter::F0;
+}
+
+void RegisterCache::BindFPR(FPR host_fpr, u16 specifier)
+{
+  INFO_LOG(DYNA_REC, "binding FPR %u (which is 0x%x) to 0x%x", u32(host_fpr),
+           u32(fpr_state[host_fpr]), u32(specifier));
+  // can only bind to guest registers
+  ASSERT((specifier & MASK_PS_MEMBER) != 0);
+  u8 reg = specifier & 31;
+  u16 member = specifier & MASK_PS_MEMBER;
+  ASSERT(fpr_state[host_fpr] == FPR_SCRATCH);
+  // invalidate any other values for the same member
+  for (u16& rs : fpr_state)
+  {
+    if ((rs & 31) == reg)
+    {
+      if ((rs & 96) == (specifier & 96) || (member == SPLAT_F))
+      {
+        rs = FPR_FREE;
+      }
+      else if ((rs & 96) == SPLAT_F)
+      {
+        rs = (rs & ~MASK_PS_MEMBER) | (member == PS0_F ? PS1_F : PS0_F);
+      }
+    }
+  }
+  fpr_state[host_fpr] = specifier | FLAG_FPR_UNSAVED | FLAG_IN_USE;
+}
+
+void RegisterCache::FlushHostFPR(PPCEmitter* emit, FPR host_fpr)
+{
+  const GPR ppcs = GetPPCState();
+  const u16 member = fpr_state[host_fpr] & MASK_PS_MEMBER;
+  ASSERT(member != 0);
+  if (fpr_state[host_fpr] & FLAG_FPR_UNSAVED)
+  {
+    if (member == SPLAT_F)
+    {
+      emit->LFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
+      emit->LFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
+    }
+    else if (member == PS0_F)
+    {
+      emit->LFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
+    }
+    else
+    {
+      emit->LFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
+    }
+    fpr_state[host_fpr] &= ~FLAG_FPR_UNSAVED;
+    INFO_LOG(DYNA_REC, "spilling guest FPR %u", u32(host_fpr));
+  }
 }
 
 }  // namespace PPC64RegCache

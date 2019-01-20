@@ -415,7 +415,8 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // keep all registers below RT
       u32 register_mask = ~((u32(1) << inst.RD) - 1);
       // stmw doesn't modify registers, so no need to invalidate
-      reg_cache.ReduceGuestRegisters(this, register_mask, inst.OPCD == 46 ? register_mask : 0);
+      reg_cache.ReduceGuestRegisters(this, register_mask, inst.OPCD == 46 ? register_mask : 0, 0,
+                                     0);
 
       GPR scratch = reg_cache.GetScratch(this);
       // write number of registers to load into CTR
@@ -667,8 +668,8 @@ void PPC64BaselineCompiler::FallbackToInterpreter(UGeckoInstruction inst, GekkoO
     gprs_to_invalidate |= 1 << inst.RA;
   }
   // special case is lmw, which uses more guest GPRs than its encoding lets on
-  reg_cache.ReduceGuestRegisters(this, 0xffffffff,
-                                 inst.OPCD != 46 ? gprs_to_invalidate : 0xffffffff);
+  reg_cache.ReduceGuestRegisters(
+      this, 0xffffffff, inst.OPCD != 46 ? gprs_to_invalidate : 0xffffffff, 0xffffffff, 0xffffffff);
   GPR ppcs = reg_cache.GetPPCState();
   GPR scratch = reg_cache.GetScratch(this);
   // set PC + NPC
