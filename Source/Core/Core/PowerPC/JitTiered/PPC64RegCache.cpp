@@ -614,16 +614,16 @@ void RegisterCache::FlushHostFPR(PPCEmitter* emit, FPR host_fpr)
   {
     if (member == SPLAT_F)
     {
-      emit->LFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
-      emit->LFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
+      emit->STFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
+      emit->STFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
     }
     else if (member == PS0_F)
     {
-      emit->LFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
+      emit->STFD(host_fpr, ppcs, OFF_PS0(fpr_state[host_fpr] & 31));
     }
     else
     {
-      emit->LFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
+      emit->STFD(host_fpr, ppcs, OFF_PS1(fpr_state[host_fpr] & 31));
     }
     fpr_state[host_fpr] &= ~FLAG_FPR_UNSAVED;
     INFO_LOG(DYNA_REC, "spilling guest FPR %u", u32(host_fpr));
