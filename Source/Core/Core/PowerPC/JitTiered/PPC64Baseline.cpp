@@ -11,8 +11,6 @@
 #include "Core/PowerPC/JitTiered/TieredPPC64.h"
 
 #define TOC_OFFSET(field) s16(s32(offsetof(TableOfContents, field)) - 0x4000)
-#define OFF_PS0(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg))
-#define OFF_PS1(reg) s16(offsetof(PowerPC::PowerPCState, ps) + 16 * (reg) + 8)
 
 // for short register state labels
 using namespace PPC64RegCache;
@@ -454,56 +452,62 @@ void PPC64BaselineCompiler::Compile(u32 addr,
       // ps_add, ps_sub, ps_div
       reg_cache.GuestFPSCR(this);
       const GPR ppcs = reg_cache.GetPPCState();
+      const FPR a1 = reg_cache.GetFPR(this, PS1_F + inst.RA);
+      const FPR b1 = reg_cache.GetFPR(this, PS1_F + inst.RB);
+      const FPR a0 = reg_cache.GetFPR(this, PS0_F + inst.RA);
+      const FPR b0 = reg_cache.GetFPR(this, PS0_F + inst.RB);
+      const FPR t1 = reg_cache.GetFPRScratch(this);
+      const FPR t0 = reg_cache.GetFPRScratch(this);
       // do second member first, so FPRF reflect the first one
-      LFD(F1, ppcs, OFF_PS1(inst.RA));
-      LFD(F2, ppcs, OFF_PS1(inst.RB));
-      LFD(F3, ppcs, OFF_PS0(inst.RA));
-      LFD(F4, ppcs, OFF_PS0(inst.RB));
-      AFormInstruction(63, F1, F1, F2, 0, inst.SUBOP5);
-      AFormInstruction(63, F3, F3, F4, 0, inst.SUBOP5);
-      FRSP(F1, F1);
-      FRSP(F3, F3);
+      AFormInstruction(63, t1, a1, b1, 0, inst.SUBOP5);
+      AFormInstruction(63, t0, a0, b0, 0, inst.SUBOP5);
+      FRSP(t1, t1);
+      FRSP(t0, t0);
       // FIXME: flush denormals
-      STFD(F1, ppcs, OFF_PS1(inst.RD));
-      STFD(F3, ppcs, OFF_PS0(inst.RD));
+      reg_cache.BindFPR(t1, PS1_F + inst.RD);
+      reg_cache.BindFPR(t0, PS0_F + inst.RD);
     }
     else if (inst.OPCD == 4 && inst.SUBOP5 == 25 && inst.Rc == 0)
     {
       // ps_mul
       reg_cache.GuestFPSCR(this);
       const GPR ppcs = reg_cache.GetPPCState();
+      const FPR a1 = reg_cache.GetFPR(this, PS1_F + inst.RA);
+      const FPR c1 = reg_cache.GetFPR(this, PS1_F + inst.RC);
+      const FPR a0 = reg_cache.GetFPR(this, PS0_F + inst.RA);
+      const FPR c0 = reg_cache.GetFPR(this, PS0_F + inst.RC);
+      const FPR t1 = reg_cache.GetFPRScratch(this);
+      const FPR t0 = reg_cache.GetFPRScratch(this);
       // do second member first, so FPRF reflect the first one
-      LFD(F1, ppcs, OFF_PS1(inst.RA));
-      LFD(F2, ppcs, OFF_PS1(inst.RC));
-      LFD(F3, ppcs, OFF_PS0(inst.RA));
-      LFD(F4, ppcs, OFF_PS0(inst.RC));
-      AFormInstruction(63, F1, F1, 0, F2, inst.SUBOP5);
-      AFormInstruction(63, F3, F3, 0, F4, inst.SUBOP5);
-      FRSP(F1, F1);
-      FRSP(F3, F3);
+      AFormInstruction(63, t1, a1, 0, c1, inst.SUBOP5);
+      AFormInstruction(63, t0, a0, 0, c0, inst.SUBOP5);
+      FRSP(t1, t1);
+      FRSP(t0, t0);
       // FIXME: flush denormals
-      STFD(F1, ppcs, OFF_PS1(inst.RD));
-      STFD(F3, ppcs, OFF_PS0(inst.RD));
+      reg_cache.BindFPR(t1, PS1_F + inst.RD);
+      reg_cache.BindFPR(t0, PS0_F + inst.RD);
     }
     else if (inst.OPCD == 4 && inst.SUBOP5 >= 28 && inst.SUBOP5 <= 31 && inst.Rc == 0)
     {
       // PS MAD
       reg_cache.GuestFPSCR(this);
       const GPR ppcs = reg_cache.GetPPCState();
+      const FPR a1 = reg_cache.GetFPR(this, PS1_F + inst.RA);
+      const FPR b1 = reg_cache.GetFPR(this, PS1_F + inst.RB);
+      const FPR c1 = reg_cache.GetFPR(this, PS1_F + inst.RC);
+      const FPR a0 = reg_cache.GetFPR(this, PS0_F + inst.RA);
+      const FPR b0 = reg_cache.GetFPR(this, PS0_F + inst.RB);
+      const FPR c0 = reg_cache.GetFPR(this, PS0_F + inst.RC);
+      const FPR t1 = reg_cache.GetFPRScratch(this);
+      const FPR t0 = reg_cache.GetFPRScratch(this);
       // do second member first, so FPRF reflect the first one
-      LFD(F1, ppcs, OFF_PS1(inst.RA));
-      LFD(F2, ppcs, OFF_PS1(inst.RB));
-      LFD(F3, ppcs, OFF_PS1(inst.RC));
-      LFD(F4, ppcs, OFF_PS0(inst.RA));
-      LFD(F5, ppcs, OFF_PS0(inst.RB));
-      LFD(F6, ppcs, OFF_PS0(inst.RC));
-      AFormInstruction(63, F1, F1, F2, F3, inst.SUBOP5);
-      AFormInstruction(63, F4, F4, F5, F6, inst.SUBOP5);
-      FRSP(F1, F1);
-      FRSP(F4, F4);
+      AFormInstruction(63, t1, a1, b1, c1, inst.SUBOP5);
+      AFormInstruction(63, t0, a0, b0, c0, inst.SUBOP5);
+      FRSP(t1, t1);
+      FRSP(t0, t0);
       // FIXME: flush denormals
-      STFD(F1, ppcs, OFF_PS1(inst.RD));
-      STFD(F4, ppcs, OFF_PS0(inst.RD));
+      reg_cache.BindFPR(t1, PS1_F + inst.RD);
+      reg_cache.BindFPR(t0, PS0_F + inst.RD);
     }
     else
     {
