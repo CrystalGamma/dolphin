@@ -426,6 +426,8 @@ public:
   // === FP load/store ===
   void LFD(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(50, frt, ra, disp); }
   void STFD(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(54, frt, ra, disp); }
+  void LFS(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(48, frt, ra, disp); }
+  void STFS(FPR frt, GPR ra, s16 disp) { DFormInstructionSigned(52, frt, ra, disp); }
 
   // === system registers ===
   // the order of the two 5-bit halves of the spr field is reversed in the encoding

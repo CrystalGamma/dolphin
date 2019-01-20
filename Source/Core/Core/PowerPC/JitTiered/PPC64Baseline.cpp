@@ -885,13 +885,14 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   {
     op = inst.OPCD - 32;
   }
-  if (op > 13)
+  if (op > 13 && (op < 16 || op > 17))
   {
     FallbackToInterpreter(inst, opinfo);
     return;
   }
   const bool is_store = op & 4;
   const bool is_update = op & 1;
+  const bool is_float = op & 16;
 
   const bool use_slowmem = !bails.empty();
 
@@ -921,6 +922,10 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
       break;
     case 6:
       offset = s16(offsetof(TableOfContents, store_hword) - 0x4000);
+      break;
+    case 8:
+      // lfs(u) – word-sized access
+      offset = s16(offsetof(TableOfContents, load_word) - 0x4000);
       break;
     default:
       ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
@@ -960,6 +965,14 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
     {
       LoadUnsignedImmediate(addr_reg, Common::BitCast<u32>(s32(inst.SIMM_16)));
     }
+  }
+  if (is_float)
+  {
+    const GPR scratch = reg_cache.GetScratch(this);
+    ANDI_Rc(scratch, addr_reg, 3);
+    memory_exceptions.push_back(
+        {BC(BR_FALSE, CR0 + EQ), reg_cache, address, downcount, EXCEPTION_ALIGNMENT, addr_reg});
+    reg_cache.FreeGPR(scratch);
   }
   GPR rst = R0;
   if (!use_slowmem)
@@ -1001,6 +1014,10 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
       break;
     case 6:
       STHBRX(rst, base, addr_reg);
+      break;
+    case 8:
+      // lfs(u) – word-sized access
+      LWBRX(rst, base, addr_reg);
       break;
     default:
       ERROR_LOG(DYNA_REC, "unexpected opcode %08x @ %08x", inst.hex, address);
@@ -1046,7 +1063,7 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
       rst = reg_cache.GetReturnRegister(0);
     }
   }
-  // maintain GPR file
+  // maintain register file
   if (is_update)
   {
     ASSERT(is_store || inst.RA != inst.RD);
@@ -1054,6 +1071,17 @@ void PPC64BaselineCompiler::LoadStore(UGeckoInstruction inst, GekkoOPInfo& opinf
   }
   if (!is_store)
   {
-    reg_cache.BindGPR(rst, ((op >> 1) == 5 ? SEXT_R : ZEXT_R) + inst.RD);
+    if (!is_float)
+    {
+      reg_cache.BindGPR(rst, ((op >> 1) == 5 ? SEXT_R : ZEXT_R) + inst.RD);
+    }
+    else
+    {
+      ASSERT((op >> 1) == 8);
+      STW(rst, R1, -4);
+      const FPR fpr = reg_cache.GetFPRScratch(this);
+      LFS(fpr, R1, -4);
+      reg_cache.BindFPR(fpr, SPLAT_F + inst.RD);
+    }
   }
 }
