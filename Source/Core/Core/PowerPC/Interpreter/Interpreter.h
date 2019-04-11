@@ -10,6 +10,11 @@
 #include "Core/PowerPC/CPUCoreBase.h"
 #include "Core/PowerPC/Gekko.h"
 
+namespace PowerPC
+{
+struct PowerPCState;
+}
+
 class Interpreter : public CPUCoreBase
 {
 public:
@@ -291,8 +296,10 @@ private:
   // flag helper
   static void Helper_UpdateCR0(u32 value);
 
-  static void Helper_FloatCompareOrdered(UGeckoInstruction inst, double a, double b);
-  static void Helper_FloatCompareUnordered(UGeckoInstruction inst, double a, double b);
+  static void Helper_FloatCompareOrdered(PowerPC::PowerPCState* ppcs, UGeckoInstruction inst,
+                                         double a, double b);
+  static void Helper_FloatCompareUnordered(PowerPC::PowerPCState* ppcs, UGeckoInstruction inst,
+                                           double a, double b);
 
   UGeckoInstruction m_prev_inst{};
 
